@@ -17,7 +17,7 @@
  bsd/dev/unix_startup.c			standard
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -601,6 +601,9 @@
+@@ -601,6 +601,10 @@
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
  	sweet_log_start();
  	sweet_sample_start();
