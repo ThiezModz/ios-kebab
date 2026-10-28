@@ -5,7 +5,9 @@
 set -euo pipefail
 
 [[ "${MACHINE_CONFIG:-}" == SWEET ]] || exit 0
-[[ -f bsd/dev/sweet_ufs.c ]] || exit 1	# the SWEET base the kebab drivers extend
+# The scripts run BEFORE the patches: guard on a vanilla-tree file, not on
+# sweet_ufs.c (which patch 0028 adds later).
+[[ -f bsd/kern/bsd_init.c ]] || exit 1
 
 here=$(dirname "$0")/../../drivers
 [[ -d "$here" ]] || { echo "drivers/ missing (checked out?)" >&2; exit 1; }
