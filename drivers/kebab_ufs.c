@@ -9,7 +9,10 @@
  * With 'kebabnoprobe=1' none of the kebab drivers start - useful to bisect
  * a boot regression to the new device code.
  */
+#include <sys/param.h>
+#include <sys/systm.h>
 #include <kern/debug.h>
+#include <machine/machine_routines.h>	/* ml_io_map */
 #include <pexpert/pexpert.h>	/* PE_parse_boot_argn */
 
 #include "kebab_sm8250.h"

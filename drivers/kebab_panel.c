@@ -25,8 +25,11 @@
  * MMIO: DPU 0xae01000, DSI0 0xae94000 (mainline sm8250.dtsi). Everything
  * DPU/DSI-specific below is VERIFY-grade bring-up code.
  */
+#include <sys/param.h>
+#include <sys/systm.h>
 #include <kern/debug.h>
 #include <libkern/libkern.h>
+#include <machine/machine_routines.h>	/* ml_io_map */
 
 #include "kebab_sm8250.h"
 
@@ -43,12 +46,14 @@
 #define PANEL_STRIDE			SM8250_FB_STRIDE
 
 static volatile uint32_t *dpu;
+static volatile uint32_t *splash;	/* ml_io_map of SM8250_FB_BASE */
 static uint64_t present_pa;		/* where the display reads its frame */
 static int panel_cmd_mode = 1;		/* AMB655X is command mode: no video scanout */
 
 void kebab_panel_init(void)
 {
 	dpu = (volatile uint32_t *)ml_io_map(SM8250_DPU, 0x1000);
+	splash = (volatile uint32_t *)ml_io_map(SM8250_FB_BASE, 0x1700000);
 	/*
 	 * Do not touch DSI0 during continuous splash (sweet's lesson). Probe
 	 * only: report what the DPU says, keep the splash alive.
@@ -60,27 +65,27 @@ void kebab_panel_init(void)
 }
 
 /*
- * Present a frame. Returns the method used:
+ * Present a frame (a kernel VA of 1080x2400x4 BGRA pixels). Returns the
+ * method used:
  *   0 = hardware scanout (needs the DSI cmd/DSC path - not yet)
  *   1 = GPU blit into the splash buffer (visible only while ABL's DSI
  *       controller keeps streaming, or in video-mode reconfigs)
  *   2 = CPU copy into the splash buffer (sweet's path, same caveat)
- *   3 = buffer already in place
  */
-int kebab_panel_present(uint64_t fb_pa)
+int kebab_panel_present(const void *frame)
 {
 	if (!panel_cmd_mode && present_pa && dpu) {
 		/* VERIFY: repoint the VIG0 layer address (video-mode only) */
-		dpu[(DPU_SSPP_VIG0_BASE + SSPP_SRC_ADDR) / 4] = (uint32_t)fb_pa;
-		dpu[(DPU_SSPP_VIG0_BASE + SSPP_SRC_ADDR + 4) / 4] = (uint32_t)(fb_pa >> 32);
-		present_pa = fb_pa;
+		dpu[(DPU_SSPP_VIG0_BASE + SSPP_SRC_ADDR) / 4] = (uint32_t)present_pa;
+		dpu[(DPU_SSPP_VIG0_BASE + SSPP_SRC_ADDR + 4) / 4] = (uint32_t)(present_pa >> 32);
 		return 0;
 	}
-	if (fb_pa != SM8250_FB_BASE) {
-		if (kebab_gpu_blit(SM8250_FB_BASE, fb_pa, PANEL_H * PANEL_STRIDE) == 0)
-			return 1;
-		bcopy_phys(fb_pa, SM8250_FB_BASE, PANEL_H * PANEL_STRIDE);	/* VERIFY helper */
-		return 2;
+	if (!splash)
+		return -1;
+	if ((uintptr_t)frame != (uintptr_t)splash) {
+		bcopy(frame, (void *)splash, PANEL_H * PANEL_STRIDE);
+		return 2;	/* CPU copy; the GPU path joins once the CP ring
+				 * proves out (kebab_gpu_blit) */
 	}
 	return 3;
 }

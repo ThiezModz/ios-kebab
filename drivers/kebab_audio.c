@@ -14,6 +14,8 @@
  *   - then a /product/audio node so CoreAudio sees a device (the sweet
  *     notes document this path)
  */
+#include <sys/param.h>
+#include <sys/systm.h>
 #include <kern/debug.h>
 
 #include "kebab_sm8250.h"

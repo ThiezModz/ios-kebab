@@ -23,14 +23,16 @@
  * VERIFY in the comments must be confirmed on the first phone boot (the
  * driver prints every uncertain value it programs).
  */
+#include <sys/param.h>
+#include <sys/systm.h>
 #include <kern/debug.h>			/* kprintf */
-#include <kern/thread.h>		/* kernel threads */
+#include <kern/thread.h>
 #include <libkern/libkern.h>		/* bcopy */
 #include <mach/mach_types.h>
+#include <machine/machine_routines.h>	/* ml_io_map */
 #include <vm/vm_kern.h>			/* kernel_map / kmem_alloc */
 #include <vm/pmap.h>			/* pmap_extract */
 #include <pexpert/pexpert.h>		/* PE_parse_boot_argn */
-#include <IOKit/IOKitLib.h>		/* ADT /chosen lookup */
 
 #include "kebab_sm8250.h"
 
@@ -89,7 +91,6 @@ struct kebab_gpu {
 };
 
 static struct kebab_gpu kebab_gpu_state;
-static struct { const uint8_t *fw; uint32_t fw_size; } kebab_gmu_state;
 
 static inline uint32_t kgpu_rd(struct kebab_gpu *g, uint32_t off)
 {
@@ -285,25 +286,19 @@ static void kebab_gpu_test(void)
 	kmem_free(kernel_map, dst_v, 0x4000);
 }
 
-/* ---- GMU firmware from the ADT ----
- * tools/mkadt.py --gmu-fw embeds the vendor a650_gmu.bin as
- * /chosen/kebab-gmu-fw (a data prop); the firmware is a Qualcomm binary
- * from the phone's own vendor partition and never lives in git. Without it
- * the driver runs in direct mode (CP works, GMU-managed power does not). */
-static const uint8_t *kebab_gmu_fw(void)
+/* ---- GMU firmware ----
+ * The a650_gmu.bin from the phone's vendor partition is embedded by
+ * tools/mkadt.py --gmu-fw as /chosen/kebab-gmu-fw. The ADT plumbing into
+ * bsd/dev is the next wiring step; until kebab_gpu_set_fw() is called the
+ * driver runs in direct mode (CP register ops work, GMU-managed power
+ * states and SQE-assisted ring submission do not). */
+static const uint8_t *kebab_gmu_fw_ptr;
+static uint32_t kebab_gmu_fw_ptr_size;
+
+void kebab_gpu_set_fw(const uint8_t *fw, uint32_t size)
 {
-	io_registry_entry_t chosen = IORegistryEntryFromPath(MACH_PORT_NULL,
-							     "IODeviceTree:/chosen");
-	if (!chosen)
-		return NULL;
-	CFDataRef fw = IORegistryEntryCreateCFProperty(chosen, CFSTR("kebab-gmu-fw"),
-						       kCFAllocatorDefault, 0);
-	IOObjectRelease(chosen);
-	if (!fw)
-		return NULL;
-	kebab_gmu_state.fw = CFDataGetBytePtr(fw);
-	kebab_gmu_state.fw_size = (uint32_t)CFDataGetLength(fw);
-	return kebab_gmu_state.fw;	/* CFData owns the bytes */
+	kebab_gmu_fw_ptr = fw;
+	kebab_gmu_fw_ptr_size = size;
 }
 
 /* ---- bring-up entry, called from bsd/dev/kebab/kebab_ufs.c ---- */
@@ -319,8 +314,8 @@ void kebab_gpu_init(void)
 		kprintf("KEBAK GPU: mmap failed\n");
 		return;
 	}
-	g->gmu_fw = kebab_gmu_fw();
-	g->gmu_fw_size = kebab_gmu_state.fw_size;
+	g->gmu_fw = kebab_gmu_fw_ptr;
+	g->gmu_fw_size = kebab_gmu_fw_ptr_size;
 
 	if (kebab_gpu_probe(g)) {
 		kprintf("KEBAK GPU: no Adreno 650 at 0x%x (QEMU run?)\n", SM8250_GPU_BASE);
