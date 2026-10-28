@@ -135,16 +135,20 @@ ipsw img4 im4p extract research/ipsw-x/dt/Firmware/all_flash/DeviceTree.d22ap.im
 
 ### 2.2 The GPU firmware (one-time)
 
-The Adreno 650 GMU firmware ships in your phone's vendor partition; extract
-it from the backup you took:
+The Adreno 650 needs three files from your phone's vendor partition:
 
 ```sh
-# vendor_b.img is Android's ext4/erofs image; mount it read-only:
+# vendor_b.img is Android's erofs/ext4 image; mount it read-only:
 mkdir -p /tmp/vendor && sudo mount -o loop,ro backup/vendor_b.img /tmp/vendor
-cp /tmp/vendor/firmware/a650_gmu.bin backup/    # exact path may differ; find it:
-find /tmp/vendor -name 'a650*' -o -name '*gmu*'
+cp /tmp/vendor/firmware/a650_gmu.bin backup/    # GMU firmware (embedded in the ADT)
+cp /tmp/vendor/firmware/a650_sqe.fw backup/     # SQE microcode (needed by the CP ring)
+cp /tmp/vendor/firmware/a650_zap.mdt backup/    # + .b00-.b02 (Zap shader; needs a PIL
+cp /tmp/vendor/firmware/a650_zap.b* backup/     #  loader - the later SMMU/PIL step)
 sudo umount /tmp/vendor
 ```
+
+`mkadt --gmu-fw` embeds the GMU firmware; the SQE/Zap files join it when the
+GMU HFI path and the SMMU work land.
 
 ### 2.3 Build the Apple Device Tree (this is the device-specific part)
 
@@ -198,12 +202,23 @@ phone's storage is never written. The first boot takes 4-5 minutes on the
 Apple logo, then the lock screen. **To go back to Android: reboot.** To get
 back to fastboot: hold Power + Volume down.
 
+Notes on the stock OnePlus ABL:
+
+- `fastboot boot` works on an **unlocked** 8T (it is how TWRP is launched on
+  this device). A locked bootloader rejects it (`boot is not allowed in Lock
+  state`).
+- **OOS 14 quirk:** on some builds (KB2003 OOS 14.0.0.602) entering fastboot
+  with the Power+Volume-down combo can freeze the bootloader after
+  `Booting... OKAY`; entering via `adb reboot bootloader` works reliably.
+  If a `fastboot boot` stalls at "Sending", re-enter fastboot with adb or
+  the key combo again.
+
 ### 3.1 RAM map and why the 12 GB variant is the comfortable one
 
 | Variant | DDR | Upper bank above 4 GiB | iOS root budget |
 | --- | --- | --- | --- |
-| 12 GB | 0x80000000 + 12 GiB | 0x1_00000000 … 0x3_80000000 (**10 GiB**) | 8G image fits |
-| 8 GB | 0x80000000 + ~7.93 GiB | 0x1_00000000 … 0x2_7B800000 (**~5.9 GiB**, U-Boot kebab: total ends 0x27B800000) | ≤ 4G image (drop AppOS) |
+| 12 GB | 0x80000000 + 12 GiB | ≈ 0x1_00000000 … 0x3_80000000 (**10 GiB**) | 8G image fits |
+| 8 GB | 0x80000000 + 7.93 GiB | 0x1_00000000 … 0x2_80000000 (**6 GiB** — U-Boot kebab: `<0x80000000 0x3B800000> <0xC0000000 0xC0000000> <0x1_80000000 0x1_00000000>`) | ≤ 4G image (drop AppOS) |
 
 Check the real numbers on your phone first — the live FDT is authoritative:
 
@@ -243,12 +258,17 @@ streams live over USB-C as Ethernet + UDP (see `tools/sweet-usbnet.sh`).
 
 ## 5. Reading the kernel log
 
-RAM root = no persistent log ring on disk. Two options:
+RAM root = no persistent log ring on disk. Three options:
 
 - **Live over USB (preferred):** boot with `kebakusb=1 sweetusb=2` and on
   the PC run `tools/sweet-usbnet.sh logs/boot.txt` — the phone enumerates as
   CDC-ECM, the PC answers 192.168.7.1/24 and the kernel streams its console
   as UDP to 192.168.7.1:5140 (starts with the last 64 KiB).
+- **A real UART (kebab advantage):** the 8T has a GENI debug console on
+  SE12 @ 0xa90000 (GPIO34 TX / GPIO35 RX, 115200, `qcom,msm-geni-console`).
+  The physical test pads are not publicly documented, but if you can reach
+  them this beats filming the screen — the kebab kernel could gain a GENI
+  UART console driver where sweet had none.
 - **On screen:** drop `sweetfb_noconsole` and film or photograph the panel.
 - Once USB host mode exists, the log ring will live on the USB root drive
   like the userdata ring did on sweet (`tools/sweet-log-pull.sh`).

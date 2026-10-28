@@ -37,9 +37,20 @@ first kebab boot. What changed and why:
   at the Mach-O VA or adrp resolves 0x188 too low (this bug cost the most
   time and is documented in mkmacho.py).
 - **Not verified:** 0082 patch application (needs the macOS CI run), any
-  driver against hardware, 12 GB RAM map, FB address 0x9c000000 on kebab,
-  QUP wrapper base for SE13 (dts says 0xa94000; wrapper list
-  0x8c0000/0x9c0000/0xac0000 from mainline).
+  driver against hardware, 12 GB RAM map, the virtual-timer INTID on SM8250
+  (sweet proved 19/PPI3 on Qualcomm GICv3; mainline sm8250.dtsi says
+  PPI 11 = INTID 27; VERIFY via the live FDT /timer).
+
+**Hardware fact sheet:** `research/kebab-hardware.md` (gitignored) has the
+full sourced reference: MMIO tables, 8 GB memory map (`<0x80000000
+0x3B800000> <0xC0000000 0xC0000000> <0x1_80000000 0x1_00000000>`, upper
+bank 0x1_00000000..0x2_80000000 = 6 GiB), panel rails (pm8150_l14/
+pm8150a_l11/l2, avdd GPIO61, reset GPIO75, TE GPIO66), touch S3908
+(reset GPIO38 active-HIGH), QUP wrappers (WRAP0 0x9c0000 / WRAP1 0xac0000 /
+WRAP2 0x8c0000; SE13 = 0xa94000), BQ28Z610 gauge on SE16 @ 0x888000 0x55,
+debug UART SE12 @ 0xa90000 (GPIO34/35, 115200 - kebab HAS serial!), USB
+wrapper 0xa6f8800 / QMP PHY 0x88e8000, fastboot boot confirmed on unlocked
+8T (OOS14 key-combo freeze quirk), a650_sqe.fw + a650_zap.* requirements.
 
 **NEXT STEPS (in order):**
 1. Push and run the CI (`gh workflow run xnu.yml`) to build 0001-0082

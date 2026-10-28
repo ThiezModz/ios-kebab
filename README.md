@@ -85,12 +85,14 @@ Not in git: partition backups, live device trees, recovery images, Apple firmwar
 
 ## Key hardware facts
 
-- SoC: SM8250 (Snapdragon 865), Kryo 585: 1× A77 @ 2.84 GHz + 3× A77 @ 2.42 GHz + 4× A55 @ 1.80 GHz, 16K pages, ARMv8.2 without PAC, PSCI through `smc`, 19.2 MHz timer, GICv3 with the timer on Group-1 IRQ INTID 19.
-- RAM: 8 or 12 GiB LPDDR; the kernel uses the upper bank above 4 GiB (12 GiB → 10 GiB usable, 8 GiB → ~5.9 GiB, ends 0x27B800000 per the U-Boot kebab tree). Check your phone's live FDT (BUILD_8T.md §3.1).
-- GPU: Adreno 650 at `0x3d00000`, GMU block at `0x3d6a000`, GPUCC at `0x3d90000`, SMMU at `0x3da0000`; GMU firmware from the vendor partition.
-- Display: Samsung AMB655X 1080×2400 @ 120 Hz, DSI **command mode** with DSC; splash at `0x9c000000` (VERIFY); presented as iPhone X 1125×2436. Real frame updates need the DSI+DSC path (`drivers/kebab_panel.c`).
-- UFS: JEDEC UFSHC at `0x1d84000` (same IP the sweet driver runs).
-- Touch/keys/battery: Synaptics S3908 touch (SE13 @ 0xa94000), SPMI PON keys on PM8150/PM8150B, PMIC fuel gauge — SM8250 addresses in `drivers/kebab_sm8250.h`, all `VERIFY`-marked until a phone boot.
+- SoC: SM8250 (Snapdragon 865), Kryo 585: 1× A77 @ 2.84 GHz + 3× A77 @ 2.42 GHz + 4× A55 @ 1.80 GHz, 16K pages, ARMv8.2 without PAC, PSCI through `smc` (target IDs 0x0..0x700), 19.2 MHz timer, GICv3 with the timer on Group-1 IRQ INTID 19.
+- RAM: 8 or 12 GiB LPDDR4X; the kernel uses the upper bank above 4 GiB (12 GiB → 10 GiB usable; 8 GiB → 6 GiB, ends 0x2_80000000 per the U-Boot kebab tree). Check your phone's live FDT (BUILD_8T.md §3.1).
+- GPU: Adreno 650 at `0x3d00000`, GMU block at `0x3d6a000`, GPUCC at `0x3d90000`, SMMU at `0x3da0000`; GMU + SQE + Zap firmware from the vendor partition.
+- Display: Samsung AMB655X 1080×2400 @ 120 Hz, DSI **command mode** with DSC; splash carveout `cont_splash_region` at `0x9c000000` (35 MiB, confirmed by downstream + mainline + U-Boot trees); presented as iPhone X 1125×2436. Real frame updates need the DSI+DSC path (`drivers/kebab_panel.c`).
+- UFS: JEDEC UFSHC at `0x1d84000` (same IP the sweet driver runs); GCC clock offsets from gcc-sm8250.c.
+- Touch/keys/battery: Synaptics S3908 touch (SE13 @ 0xa94000, addr 0x4b), PM8150 PON keys (power/vol-down, vol-up via PMIC GPIO), TI BQ28Z610 fuel gauge (SE16 @ 0x888000, addr 0x55) — SM8250 addresses in `drivers/kebab_sm8250.h`.
+- Debug: GENI UART console on SE12 @ 0xa90000 (GPIO34/35, 115200) — a real serial port, which sweet never had; physical pads undocumented.
+- WiFi/BT: QCA6390 (PCIe WLAN + Slimbus BT), audio: WCD938x + 2× TFA9874, cameras: IMX586 + IMX481 + IMX471 + GC5035/GC02M1B, NFC: NQ-NCI, fingerprint: Goodix optical — all stubbed like sweet's (see `research/kebab-hardware.md` for the full fact sheet with sources).
 
 More in [`NOTES.md`](NOTES.md).
 

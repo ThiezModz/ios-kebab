@@ -7,8 +7,7 @@
  *     16 TX x 36 RX, coordinates 1079x2399 (kona-mtp.dtsi)
  *   - power: vdd 2.8 V = pm8150_l13, vcc 1.8 V = pm8150a_l1, both through
  *     RPMh votes (the sweet port showed the IC never answers unpowered)
- *   - reset GPIO38 (active low), IRQ GPIO39 (VERIFY TLMM numbers on the
- *     first boot; the live FDT is authoritative)
+ *   - reset GPIO38 active-HIGH (dt flag 0x1), IRQ GPIO39
  *
  * The S3908 speaks a different register map than sweet's Goodix GT9896, so
  * this driver implements the Synaptics read flow itself and reuses only the
@@ -50,11 +49,12 @@ void kebab_touch_init(void)
 	else
 		kprintf("KEBAK TOUCH: touch rails (pm8150_l13 + pm8150a_l1) voted on\n");
 
-	/* 2. Reset sequence: reset GPIO38 low 5 ms, high, 60 ms settle (VERIFY). */
+	/* 2. Reset sequence: reset GPIO38 is ACTIVE-HIGH (dt flag 0x1):
+	 * assert (high) 5 ms, deassert (low), 60 ms settle. */
 	extern int sweet_gpio_out(int gpio, int value);	/* TLMM helper, VERIFY name */
-	sweet_gpio_out(SM8250_TOUCH_RESET_GPIO, 0);
-	delay(1);
 	sweet_gpio_out(SM8250_TOUCH_RESET_GPIO, 1);
+	delay(1);
+	sweet_gpio_out(SM8250_TOUCH_RESET_GPIO, 0);
 	delay(6);
 
 	/* 3. Bring up GENI SE13 for I2C (the sweet GENI init generalized). */

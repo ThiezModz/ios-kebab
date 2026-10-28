@@ -30,25 +30,33 @@ static void kebab_keys_poll(void)
 		return;
 	uint32_t delta = sts ^ pon_prev;
 	pon_prev = sts;
-	if (delta & 0x1)	/* KPDPWR = power, VERIFY bit */
+	/* PM8150 PON: PON1 = KPDPWR (power), PON2 = RESIN (volume down).
+	 * Volume up is a PM8150 GPIO (mainline kebab: GPIO6, active-low);
+	 * poll it through the SPMI GPIO status once the sweet SPMI helper
+	 * covers GPIOs (VERIFY on first boot). */
+	if (delta & 0x1)	/* KPDPWR, VERIFY bit */
 		sweet_hid_key(0, sts & 0x1);
-	if (delta & 0x2)	/* RESIN = volume down, VERIFY bit */
+	if (delta & 0x2)	/* RESIN, VERIFY bit */
 		sweet_hid_key(2, sts & 0x2);
-	if (delta & 0x4)	/* volume up GPIO latch, VERIFY bit */
-		sweet_hid_key(1, sts & 0x4);
 }
 
 /*
- * Battery: the 8T reports charge through the PM8150B FG over SPMI. Until the
- * FG register map is confirmed on-device, publish the same static
- * IOPMPowerSource sweet used (SweetBattery); the readout hook below is
- * prepared and prints raw FG data with 'kebakbatt=1'.
+ * Battery: the 8T's real fuel gauge is a TI BQ28Z610 on qupv3_se16_i2c
+ * (0x888000, addr 0x55, oplus bq27541 wrapper — kona-mtp.dtsi); the PM8150B
+ * SPMI fg-gen4 is disabled by default. Until the I2C read path is proven,
+ * the sweet static IOPMPowerSource (SweetBattery) stays published; this
+ * probe prints raw gauge data with 'kebakbatt=1'.
  */
 static void kebab_battery_probe(void)
 {
-	uint32_t v = 0;
-	if (sweet_spmi_read(SM8250_PMIC_PON_SID, 0x1000 /* FG_BATT_SOC, VERIFY */, &v) == 0)
-		kprintf("KEBAK PMIC: fuel gauge raw 0x%08x (VERIFY register)\n", v);
+	extern int sweet_geni_i2c_read(uint32_t addr, uint8_t reg, uint8_t *buf, int len);	/* VERIFY */
+	uint8_t v[2];
+	if (sweet_geni_i2c_read(SM8250_GAUGE_I2C_ADDR, 0x2c /* BQ28Z610 StateOfCharge, VERIFY */,
+				v, sizeof(v)) == 0)
+		kprintf("KEBAK PMIC: BQ28Z610 gauge raw %02x%02x (VERIFY register)\n", v[0], v[1]);
+	else
+		kprintf("KEBAK PMIC: BQ28Z610 gauge does not answer on SE16 (expected: "
+			"needs the GENI SE init first)\n");
 }
 
 void kebab_pmic_init(void)

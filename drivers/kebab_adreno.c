@@ -181,6 +181,14 @@ static int kebab_gmu_boot(struct kebab_gpu *g)
 
 static void kebab_gpu_ring(struct kebab_gpu *g)
 {
+	/*
+	 * NOTE: on a650 the CP runs its SQE microcode for every ring command;
+	 * the SQE ucode comes from a650_sqe.fw and is normally loaded through
+	 * the GMU HFI path. Without it (direct mode), simple register-level
+	 * ops still work but ring submissions may hang the CP - the blit
+	 * self-test tells. The SQE load is the next GMU/HFI step after the
+	 * ITCM boot below proves out.
+	 */
 	/* Physical ring + rptr in wired kernel memory (bounce via IOMalloc-style
 	 * path; the sweet UFS driver allocates its DMA pool the same way). */
 	kgpu_wr(g, A6XX_CP_RB_BASE, (uint32_t)g->rb_pa);
