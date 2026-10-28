@@ -67,6 +67,21 @@ void kebab_panel_init(void)
 }
 
 /*
+ * Opt-in hardware scanout (kebabdpu=1). The AMB655X is command mode: there
+ * is no video-mode scanout to repoint, so this only logs the state until
+ * the DSI+DSC command streaming path exists.
+ */
+void kebab_panel_dpu_try(void)
+{
+	if (!dpu) {
+		printf("KEBAK PANEL: DPU mmap missing, dpu=1 ignored\n");
+		return;
+	}
+	printf("KEBAK PANEL: kebabdpu=1 but the panel is cmd-mode DSC - "
+		"hardware scanout needs the DSI cmd + DSC stream path (TODO)\n");
+}
+
+/*
  * Present a frame (a kernel VA of 1080x2400x4 BGRA pixels). Returns the
  * method used:
  *   0 = hardware scanout (needs the DSI cmd/DSC path - not yet)
