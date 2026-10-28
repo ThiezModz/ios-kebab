@@ -1,7 +1,10 @@
 #!/bin/bash
 # Build the shim and wrap it in a boot.img v2 that mirrors the stock PixelOS header.
+# --qemu: stop after out/Image (QEMU boots the raw Image, no boot.img / DTB).
 set -euo pipefail
 cd "$(dirname "$0")"
+QEMU_ONLY=0
+[ "${1:-}" = "--qemu" ] && QEMU_ONLY=1
 CC=aarch64-linux-gnu-gcc
 OBJCOPY=aarch64-linux-gnu-objcopy
 CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only -mstrict-align -fno-stack-protector -Wall -Wextra"
@@ -19,6 +22,7 @@ $OBJCOPY -O binary out/shim.elf out/Image
 # ABL copies the file; pad to image_size so .bss/stacks exist as zeroed bytes.
 size=$(aarch64-linux-gnu-nm out/shim.elf | awk '$3=="_end"{print strtonum("0x"$1)}')
 truncate -s "$size" out/Image
+[ "$QEMU_ONLY" = 1 ] && { ls -l out/Image; exit 0; }
 # Ramdisk: an xnu payload (tools/mkpayload.py) if given as $1, else an empty
 # newc cpio (ABL dislikes a zero-size ramdisk on some builds) -> diagnostics.
 if [ -n "${1:-}" ]; then

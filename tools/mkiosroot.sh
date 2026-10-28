@@ -1,8 +1,11 @@
 #!/bin/bash
-# Build the SWEET iOS root: one case-sensitive HFS+ image holding an iOS OS
-# root filesystem plus its cryptexes, for the userdata partition (rd=ufsroot0).
+# Build the ios-kebab iOS root: one case-sensitive HFS+ image holding an iOS OS
+# root filesystem plus its cryptexes. Ramdisk root for the 8T (rd=md0, see
+# BUILD_8T.md); the sweet install-to-userdata mode also used this image.
 #
 #   mkiosroot.sh OS.dmg SYSTEMOS.dmg APPOS.dmg OUT.img [SIZE]     (SIZE default 16G)
+#   mkiosroot.sh OS.dmg SYSTEMOS.dmg none OUT.img 5G   # skip the AppOS cryptex
+#                                                      # (smaller RAM root on 8 GB phones)
 #
 # The IPSW images are raw APFS with LZBITMAP-compressed files: they are read
 # through apfs-fuse (decompressing), so the HFS+ copy is uncompressed. On a
@@ -19,7 +22,10 @@
 set -euo pipefail
 
 [[ $# -ge 4 ]] || { sed -n '2,12p' "$0"; exit 2; }
-os=$(realpath "$1") sysos=$(realpath "$2") appos=$(realpath "$3") out=$4 size=${5:-16G}
+os=$(realpath "$1") sysos=$(realpath "$2")
+appos=$3
+[ "$appos" = "none" ] || appos=$(realpath "$appos")
+out=$4 size=${5:-16G}
 [[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }
 
 # Pre-flight tool check
@@ -69,7 +75,9 @@ apfs_mount() {
 }
 apfs_mount "$os" os
 apfs_mount "$sysos" sysos
-apfs_mount "$appos" appos
+if [ "$appos" != "none" ]; then
+	apfs_mount "$appos" appos
+fi
 
 truncate -s "$size" "$out"
 mkfs.hfsplus -s -J -v iOSRoot "$out"
@@ -84,7 +92,9 @@ copy() {
 }
 copy "$work/os/root" "$work/root"
 copy "$work/sysos/root" "$work/root/private/preboot/Cryptexes/OS"
-copy "$work/appos/root" "$work/root/private/preboot/Cryptexes/App"
+if [ "$appos" != "none" ]; then
+	copy "$work/appos/root" "$work/root/private/preboot/Cryptexes/App"
+fi
 
 # Shared cache where dyld looks at ignition level 1: hard links, no extra space.
 dsc=private/preboot/Cryptexes/OS/System/Library/Caches/com.apple.dyld
@@ -96,7 +106,9 @@ done
 # dyld does not search the cryptexes at ignition level 1: hard-link every
 # cryptex file that has no counterpart in the OS root (libobjc-trampolines,
 # libffi-trampolines, libstdc++, ...) to its root path.
-for c in OS App; do
+cryptexes="OS"
+[ "$appos" = "none" ] || cryptexes="$cryptexes App"
+for c in $cryptexes; do
 	(cd "$work/root/private/preboot/Cryptexes/$c" && sudo find . ! -type d ! -path './System/Library/Caches/com.apple.dyld/*') |
 	while IFS= read -r f; do
 		f=${f#./}

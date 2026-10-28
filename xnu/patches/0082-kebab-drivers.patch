@@ -1,0 +1,30 @@
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -108,6 +108,14 @@ bsd/dev/memdev.c			standard
+ bsd/dev/sweet_ufs.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
++bsd/dev/kebab/kebab_adreno.c		standard
++bsd/dev/kebab/kebab_audio.c		standard
++bsd/dev/kebab/kebab_panel.c		standard
++bsd/dev/kebab/kebab_pmic.c		standard
++bsd/dev/kebab/kebab_touch.c		standard
++bsd/dev/kebab/kebab_ufs.c		standard
++bsd/dev/kebab/kebab_usb.c		standard
+ bsd/dev/mem.c				standard
+ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -601,6 +601,9 @@
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
+ 	sweet_log_start();
+ 	sweet_sample_start();
++	/* ios-kebab device bring-up (OnePlus 8T / SM8250), see bsd/dev/kebab/.
++	 * Boot-arg kebabnoprobe=1 skips all of it. */
++	extern void kebab_init(void);
++	kebab_init();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+ 	sweet_keys_init();
+ 	sweet_touch_init();

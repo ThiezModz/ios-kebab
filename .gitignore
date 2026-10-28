@@ -7,4 +7,6 @@ research/
 shim/out/
 xnu/out/
 xnu/out-*/
+qemu-img/
+qemu-run/
 __pycache__/

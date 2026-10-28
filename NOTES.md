@@ -1,6 +1,58 @@
-# iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
+# iOS 16 on kebab (OnePlus 8T, SM8250) - working notes
 
-## Agent handoff / active work (2026-10-15, latest)
+## >>> HANDOFF 2026-10-28: repo retargeted from sweet to kebab <<<
+
+**STATE (2026-10-28): the repo now targets the OnePlus 8T; nothing has been
+booted on a phone yet.** All phone-side values are VERIFY-grade until the
+first kebab boot. What changed and why:
+
+- **Naming:** the XNU machine config stays SWEET and kernel boot-args stay
+  `sweet*` (the shared patch series is the proven sweet foundation; renaming
+  77 patches would be unverifiable without CI). Everything user-facing is
+  ios-kebab now. The boot-arg naming is documented in AGENTS.md.
+- **No-wipe design (new):** the iOS root is a RAM disk (rd=md0); userdata is
+  never flashed/mounted. See BUILD_8T.md (the complete guide) — 8 GB phone:
+  upper bank ~5.9 GiB (0x1_00000000..0x2_7B800000, U-Boot kebab patch),
+  12 GB: 10 GiB. Root image sized accordingly (drop AppOS on 8 GB).
+- **Drivers (new, `drivers/`, staged by 0082-stage-kebab-drivers.sh + patch
+  0082):** kebab_adreno.c (A650 @ 0x3d00000, GMU @ 0x3d6a000, GPUCC @
+  0x3d90000, SMMU @ 0x3da0000; GMU fw from ADT /chosen/kebab-gmu-fw via
+  `mkadt --gmu-fw`, CP ring + blit + kebabgputest=1 self-test),
+  kebab_panel.c (AMB655X cmd-mode DSC - **frame updates need DSI+DSC
+  streaming, TODO**), kebab_touch.c (Synaptics S3908 @ 0x4b, SE13 @ 0xa94000,
+  pm8150_l13+pm8150a_l1 rails, GPIO38 reset/39 IRQ), kebab_pmic.c (PON keys
+  SID0, fuel gauge probe), kebab_ufs.c (kebab_init entry; GCC UFS offsets
+  from gcc-sm8250.c), kebab_usb.c / kebab_audio.c (stubs). All MMIO in
+  drivers/kebab_sm8250.h, every uncertain value marked VERIFY.
+- **mkadt.py:** kebab identity (oneplus,kebab/qcom,sm8250, kebab-shim, ECID
+  0x4b45424154000001), Kryo 585 clocks, --highmem-base/size, --gmu-fw.
+- **QEMU sample (new, verified locally):** scripts/mk-qemu-image.sh builds
+  shim + demo kernel (qemu/demo, linked at 0x40000188 so link VAs == Mach-O
+  VAs; tools/mkmacho.py wraps it) + ADT + payload + patched FDT into
+  qemu-img/, plus a FAT32 qcow2. qemu-img/run.sh boots the REAL phone chain
+  (shim -> SWEETXNU payload) and dumps serial.txt + fb.png + fb.txt.
+  VERIFIED: serial shows boot_args, cmdline, ADT walk (/device-tree,
+  /chosen, /cpus/cpu0, /arm-io/gic ...) and heartbeat ticks; fb decodes.
+  Fixes on the way: PL011 TXFE is FR bit 7 (not 5), the demo ELF must link
+  at the Mach-O VA or adrp resolves 0x188 too low (this bug cost the most
+  time and is documented in mkmacho.py).
+- **Not verified:** 0082 patch application (needs the macOS CI run), any
+  driver against hardware, 12 GB RAM map, FB address 0x9c000000 on kebab,
+  QUP wrapper base for SE13 (dts says 0xa94000; wrapper list
+  0x8c0000/0x9c0000/0xac0000 from mainline).
+
+**NEXT STEPS (in order):**
+1. Push and run the CI (`gh workflow run xnu.yml`) to build 0001-0082
+   (catches patch-apply and driver compile errors).
+2. On the phone: extract the kebab DTB (unpack_bootv2.py), check the memory
+   node + /soc addresses against drivers/kebab_sm8250.h, build the ADT with
+   the real --highmem values.
+3. First phone boot with `kebabgputest=1 kebabtouch=1` (no root image yet:
+   rd=md0 with an empty ramdisk to see the driver probes).
+4. RAM root image per BUILD_8T.md, then the GUI path (cmd-mode panel is the
+   big new wall vs sweet).
+
+## Agent handoff / active work (2026-10-15, latest) - sweet history below
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
 
