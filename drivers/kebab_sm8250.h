@@ -16,7 +16,6 @@
 #define SM8250_GICD			0x17a00000UL
 #define SM8250_GICR			0x17a60000UL
 #define SM8250_TIMEBASE			19200000UL	/* CXO, like all SM8xxx */
-#define SM8250_VTIMER_INTID		19		/* Group-1 IRQ on Qualcomm */
 #define SM8250_IMEM			0x14680000UL	/* restart reason @ 0x65c */
 #define SM8250_IMEM_RESTART		0x146aa65cUL
 #define SM8250_PSHOLD			0x0c264000UL
@@ -124,8 +123,9 @@
 #define SM8250_FB_STRIDE		(SM8250_FB_W * 4)
 
 /* ---- Arch timer: 19.2 MHz, GICv3 GICD 0x17a00000 / GICR 0x17a60000.
- * Virtual timer INTID: the sweet port proved 19 (PPI 3) on Qualcomm GICv3;
- * mainline sm8250.dtsi says PPI 11 (INTID 27). VERIFY against the live FDT
- * /timer interrupts on the first boot (mkadt.py emits 19 by default). ---- */
+ * Virtual timer INTID 27 = PPI 11, from the kebab live DTB (boot.img dtb):
+ * interrupts = <1 13> <1 14> <1 11> <1 12>. mkadt.py emits the same. ---- */
+#define SM8250_VTIMER_INTID		27
+#define SM8250_PTIMER_INTID		30
 
 #endif /* KEBAK_SM8250_H */

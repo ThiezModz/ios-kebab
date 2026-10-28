@@ -19,6 +19,26 @@ The CI loop took 6 runs; every failure fixed and re-verified:
 - Remotes: origin = ThiezModz/ios-kebab (public), upstream = dipa-studio.
   Nothing has been booted on a phone yet; all hardware values VERIFY-grade.
 
+**LIVE DEVICE VERIFICATION (2026-10-28 night, user's phone connected):**
+- 8 GB variant (MemTotal 7.33 GiB) → upper bank 0x1_00000000..0x2_80000000
+  (6 GiB); mkadt --highmem defaults updated, 12 GB users pass
+  --highmem-size 0x280000000.
+- Timer: live DTB says `<1 13> <1 14> <1 11> <1 12>` → **virtual timer =
+  PPI 11 = INTID 27** (sweet used 19 on SM7150!). Patch 0017 reads the ADT
+  value at boot, so mkadt.py + shim.c + kebab_sm8250.h now emit 27.
+- Backups: backup/{persist,modemst1,modemst2,fsg,fsc,devinfo}.img +
+  boot.img/dtbo.img/vbmeta.img from the ACTIVE SLOT (_b; the by-name dir
+  has boot_a/boot_b - plain `boot` does not exist, and there is no
+  vendor_b: vendor is logical inside super). GPU fw pulled from
+  /vendor/firmware into backup/gpu-fw/: a650_gmu.bin (41548 B),
+  a650_sqe.fw (31632 B), a650_zap.{mdt,b00,b01,b02,elf}.
+- dtb/boot_unpacked/dtb extracted from boot.img: GPUCC 0x3d90000/0x9000,
+  SMMU 0x3da0000, UFS 0x1d84000 + ICE 0x1d90000, SPMI arb 0xc440000 all
+  match kebab_sm8250.h. The touch S3908@0x4B node is NOT in the boot dtb
+  (i2c@a94000 is disabled there) - it lives in the DTBO overlay
+  (backup/dtbo.img contains synaptics@4B / synaptics-s3908, fragment@40),
+  which ABL applies at boot, so the live FDT the shim sees has it.
+
 **What changed and why (the repo rewrite, 2026-10-28):**
 
 - **Naming:** the XNU machine config stays SWEET and kernel boot-args stay

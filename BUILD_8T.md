@@ -50,17 +50,35 @@ sudo apt install qemu-system-arm gcc-aarch64-linux-gnu android-tools-android \
 
 ### 0.2 Back up the phone (per-device calibration data)
 
-Boot the stock recovery or a temporary OrangeFox and pull at least `persist`,
-`modemst1`, `modemst2`, `fsg`, `fsc`, `boot`, `dtbo`, `vbmeta`, and the
-**vendor partition** (the GPU firmware for step 2.5 lives there). These hold
-your IMEI and RF calibration; keep them off git (`.gitignore` covers
-`backup/`).
+While Android is running (rooted shell or recovery), pull at least `persist`,
+`modemst1`, `modemst2`, `fsg`, `fsc`, `devinfo`, plus the **active-slot**
+`boot`, `dtbo`, `vbmeta`. They hold your IMEI and RF calibration; keep them
+off git (`.gitignore` covers `backup/`).
+
+> The 8T is an **A/B device**: partitions are `boot_a`/`boot_b` etc. — use
+> the active slot. `vendor` is a **logical partition inside `super`** (there
+> is no `vendor_b` block device); pull its files directly from `/vendor`.
 
 ```sh
 mkdir -p backup
-adb pull /dev/block/by-name/persist backup/       # in recovery, root shell
-# ... same for modemst1 modemst2 fsg fsc boot dtbo vbmeta
-adb pull /dev/block/by-name/vendor_b backup/vendor_b.img   # ~1.5 GB, for the GPU fw
+SLOT=$(adb shell getprop ro.boot.slot_suffix | tr -d '\r')   # e.g. _b
+for p in persist modemst1 modemst2 fsg fsc devinfo; do
+	adb exec-out "su -c 'dd if=/dev/block/by-name/$p'" > backup/$p.img   # raw, no PTY
+done
+adb exec-out "su -c 'dd if=/dev/block/by-name/boot$SLOT'" > backup/boot.img
+adb exec-out "su -c 'dd if=/dev/block/by-name/dtbo$SLOT'" > backup/dtbo.img
+adb exec-out "su -c 'dd if=/dev/block/by-name/vbmeta$SLOT'" > backup/vbmeta.img
+ls -la backup/     # check: no 0-byte files (dd to a missing name silently makes one)
+```
+
+The GPU firmware lives in the logical `vendor` partition — pull the files
+instead of the image:
+
+```sh
+mkdir -p backup/gpu-fw
+for f in a650_gmu.bin a650_sqe.fw a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02 a650_zap.elf; do
+	adb exec-out "su -c 'cat /vendor/firmware/$f'" > backup/gpu-fw/$f
+done
 ```
 
 ### 0.3 Extract the stock DTB (the shim needs it for the boot.img)
@@ -136,28 +154,26 @@ ipsw img4 im4p extract research/ipsw-x/dt/Firmware/all_flash/DeviceTree.d22ap.im
 
 ### 2.2 The GPU firmware (one-time)
 
-The Adreno 650 needs three files from your phone's vendor partition:
-
-```sh
-# vendor_b.img is Android's erofs/ext4 image; mount it read-only:
-mkdir -p /tmp/vendor && sudo mount -o loop,ro backup/vendor_b.img /tmp/vendor
-cp /tmp/vendor/firmware/a650_gmu.bin backup/    # GMU firmware (embedded in the ADT)
-cp /tmp/vendor/firmware/a650_sqe.fw backup/     # SQE microcode (needed by the CP ring)
-cp /tmp/vendor/firmware/a650_zap.mdt backup/    # + .b00-.b02 (Zap shader; needs a PIL
-cp /tmp/vendor/firmware/a650_zap.b* backup/     #  loader - the later SMMU/PIL step)
-sudo umount /tmp/vendor
-```
-
-`mkadt --gmu-fw` embeds the GMU firmware; the SQE/Zap files join it when the
-GMU HFI path and the SMMU work land.
+Already done in step 0.2 (`backup/gpu-fw/`): the Adreno 650 needs
+`a650_gmu.bin` (embedded in the ADT by `--gmu-fw`), `a650_sqe.fw` (SQE
+microcode, needed by the CP ring), and the `a650_zap.*` set (Zap shader;
+needs a PIL loader, the later SMMU/PIL step). Verified on this phone:
+`/vendor/firmware/a650_gmu.bin` (41548 B), `a650_sqe.fw` (31632 B),
+`a650_zap.mdt/.b00-.b02/.elf` all present.
 
 ### 2.3 Build the Apple Device Tree (this is the device-specific part)
 
 ```sh
 python3 tools/mkadt.py shim/out/kebab.adt --highmem \
-    [--highmem-base 0x100000000] [--highmem-size 0x...] \
-    [--gmu-fw backup/a650_gmu.bin]
+    --highmem-base 0x100000000 --highmem-size 0x180000000 \
+    --gmu-fw backup/gpu-fw/a650_gmu.bin
 ```
+
+`--highmem-size 0x180000000` = 6 GiB, the upper bank of the **8 GB** variant
+(verified live: this phone reports MemTotal 7.33 GiB; the U-Boot kebab map
+ends at 0x2_80000000). On a **12 GB** unit pass `--highmem-size
+0x280000000` (10 GiB) instead. The timer INTID (virtual = PPI 11 = 27) was
+also verified against the live DTB and is built into mkadt.
 
 `mkadt.py` embeds the kebab MMIO layout (SM8250 GIC, UFS, GENI QUP, DPU,
 framebuffer — the same numbers `drivers/kebab_sm8250.h` uses) plus the
@@ -218,18 +234,14 @@ Notes on the stock OnePlus ABL:
 
 | Variant | DDR | Upper bank above 4 GiB | iOS root budget |
 | --- | --- | --- | --- |
-| 12 GB | 0x80000000 + 12 GiB | ≈ 0x1_00000000 … 0x3_80000000 (**10 GiB**) | 8G image fits |
-| 8 GB | 0x80000000 + 7.93 GiB | 0x1_00000000 … 0x2_80000000 (**6 GiB** — U-Boot kebab: `<0x80000000 0x3B800000> <0xC0000000 0xC0000000> <0x1_80000000 0x1_00000000>`) | ≤ 4G image (drop AppOS) |
+| 12 GB | 0x80000000 + 12 GiB | ≈ 0x1_00000000 … 0x3_80000000 (**10 GiB**, `--highmem-size 0x280000000`) | 8G image fits |
+| 8 GB | 0x80000000 + 7.93 GiB | 0x1_00000000 … 0x2_80000000 (**6 GiB**, `--highmem-size 0x180000000` — **this phone**; live MemTotal 7.33 GiB) | ≤ 4G image (drop AppOS) |
 
-Check the real numbers on your phone first — the live FDT is authoritative:
-
-```sh
-fdtdump dtb/boot_unpacked/dtb | grep -B1 -A4 'memory@' | grep -E 'reg|memory'
-```
-
-and pass them to mkadt (`--highmem-base/--highmem-size`). The shim's ADT and
-the payload keep the same numbers, and the shim refuses to boot a payload
-whose RAM window overlaps the payload itself.
+The boot.img DTB's memory node is a size-0 placeholder (ABL fills the real
+one at boot), so the sizes above come from the U-Boot kebab map, cross-
+checked against the live `MemTotal`. The shim's ADT and the payload keep
+the same numbers, and the shim refuses to boot a payload whose RAM window
+overlaps the payload itself.
 
 ### 3.2 Why not USB root yet (and how it will work)
 

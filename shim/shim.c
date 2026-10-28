@@ -30,8 +30,8 @@
 #define GICR_ISPENDR0		(GICR_SGI + 0x200)
 #define GICR_ISACTIVER0		(GICR_SGI + 0x300)
 #define GICR_ICFGR1		(GICR_SGI + 0xc04)
-#define VTIMER_INTID		19	/* DT: <GIC_PPI 3 ...>, not the usual 27 */
-#define PTIMER_INTID		18	/* DT: <GIC_PPI 2 ...> */
+#define VTIMER_INTID		27	/* kebab live DTB: <GIC_PPI 11 ...> */
+#define PTIMER_INTID		30	/* kebab live DTB: <GIC_PPI 14 ...> */
 #define SGI_INTID		1
 
 #define PSCI_VERSION		0x84000000UL

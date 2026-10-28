@@ -21,13 +21,13 @@ MEM_SIZE = 0x4d000000
 # and independently on ios-fajita.
 PANIC_LOG_SIZE = 0x100000
 # --highmem (phone only): the whole upper DDR bank. The kebab live FDT memory
-# node is <0x80000000 low>, <0x1_00000000 high>; every fixed reserved-memory
-# carve-out is in the low bank and the dynamic pools are limited below 4G.
-# VERIFY size against your phone's FDT (BUILD_8T.md step 3.1):
-#   12 GB kebab: upper bank = 0x1_00000000..0x3_80000000 (10 GiB)
-#   8 GB kebab:  upper bank = 0x1_00000000..0x2_80000000 (6 GiB)
+# node is filled by ABL at boot; the U-Boot kebab map gives:
+#   8 GB kebab (this phone, MemTotal 7.33 GiB): <0x80000000 0x3B800000>
+#     <0xC0000000 0xC0000000> <0x1_80000000 0x1_00000000>
+#     -> upper bank 0x1_00000000..0x2_80000000 = 6 GiB
+#   12 GB kebab: pass --highmem-size 0x280000000 (10 GiB) explicitly.
 HIGH_PHYS_BASE = 0x100000000
-HIGH_MEM_SIZE = 0x1f4000000
+HIGH_MEM_SIZE = 0x180000000
 # /arm-io children are relative to this; it must not be 0 (serial_init bails)
 SOC_BASE = 0x01000000
 
@@ -39,7 +39,10 @@ FB_W, FB_H, FB_STRIDE = 1080, 2400, 1080 * 4
 # Internal UFS host (ufshc@1d84000 "ufs_mem"); QEMU virt has none
 UFS, UFS_SIZE = 0x01d84000, 0x3000
 TIMEBASE = 19200000
-VTIMER_INTID = 19
+# kebab live DTB (boot.img dtb): timer interrupts = <1 13> <1 14> <1 11> <1 12>
+# -> the virtual timer XNU uses (CNTV) is PPI 11 = INTID 27. (The sweet port
+# had 19 on SM7150; the ADT value is what the kernel reads, patch 0017.)
+VTIMER_INTID = 27
 # QEMU virt (-M virt,gic-version=3 -cpu cortex-a76): GICD/GICR and the generic timer's CNTFRQ
 QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE = 0x08000000, 0x080a0000, 62500000
 QEMU_VTIMER_INTID = 27
