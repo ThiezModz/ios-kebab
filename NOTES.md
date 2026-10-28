@@ -2,9 +2,24 @@
 
 ## >>> HANDOFF 2026-10-28: repo retargeted from sweet to kebab <<<
 
-**STATE (2026-10-28): the repo now targets the OnePlus 8T; nothing has been
-booted on a phone yet.** All phone-side values are VERIFY-grade until the
-first kebab boot. What changed and why:
+**STATE (2026-10-28 evening): the kernel BUILDS with the kebab drivers.** CI
+run 40760685006 (ThiezModz/ios-kebab) green: xnu-8796 + patches 0001-0082 +
+drivers/, `kernel.development.sweet` downloaded to `xnu/out/` (17M), 28
+KEBAK strings linked in (GPU/panel/touch/pmic/ufs/usb/audio all present).
+The CI loop took 6 runs; every failure fixed and re-verified:
+- stage script: guard on a vanilla-tree file (scripts run BEFORE patches),
+  and a never-created kebab_keys.c copy removed
+- 0082 patch: hunk line count corrupt (+601,9 vs 10) and bsd/conf/files
+  context missing sweet_rpmh/spmi/usb (added by 0062/0072) - both fixed
+  and verified locally with git apply --check against a reconstructed tree
+- drivers: BSD-layer symbols (ml_io_map, pmap_find_phys externs,
+  kmem_alloc_contig like sweet_ufs.c, printf not kprintf), missing
+  kebab_panel_dpu_try link error
+- workflow now triggers on drivers/** too
+- Remotes: origin = ThiezModz/ios-kebab (public), upstream = dipa-studio.
+  Nothing has been booted on a phone yet; all hardware values VERIFY-grade.
+
+**What changed and why (the repo rewrite, 2026-10-28):**
 
 - **Naming:** the XNU machine config stays SWEET and kernel boot-args stay
   `sweet*` (the shared patch series is the proven sweet foundation; renaming
