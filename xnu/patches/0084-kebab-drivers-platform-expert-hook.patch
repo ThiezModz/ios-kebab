@@ -1,0 +1,22 @@
+--- a/iokit/Kernel/arm/SweetPlatformExpert.cpp
++++ b/iokit/Kernel/arm/SweetPlatformExpert.cpp
+@@ -61,6 +61,14 @@
+ bool
+ SweetPlatformExpert::start(IOService *provider)
+ {
+ 	IOLog("SWEET: starting device-tree platform expert\n");
+ 	if (!IODTPlatformExpert::start(provider)) {
+ 		return false;
+ 	}
+ 	registerService();
+ 	IOLog("SWEET: platform expert registered\n");
++	/*
++	 * ios-kebab: the device drivers hang off the UFS attach in the sweet
++	 * design (bsd/dev/sweet_ufs.c), but the no-wipe RAM root (rd=md0)
++	 * never attaches UFS, so start the kebab chain here instead. kebab_init
++	 * is one-shot (guarded), so ufsroot0 boots keep the original path.
++	 */
++	extern void kebab_init(void);
++	kebab_init();
+ 	return true;
+ }

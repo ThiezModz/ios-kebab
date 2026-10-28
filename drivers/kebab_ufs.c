@@ -30,12 +30,18 @@ extern void kebab_ufs_clocks(void);
 
 /*
  * Called from bsd/dev/sweet_ufs.c right after the UFS root is up (the 0082
- * patch adds the call next to sweet_keys_init/sweet_touch_init). Each
- * subsystem behind a boot-arg stays off until proven on the phone; defaults
- * match what sweet enabled by default.
+ * patch) AND from SweetPlatformExpert::start (patch 0084, so the no-wipe
+ * RAM root rd=md0 - which never attaches UFS - still starts the drivers).
+ * One-shot: whichever path runs first wins. Each subsystem behind a
+ * boot-arg stays off until proven on the phone.
  */
+static int kebab_init_done;
+
 void kebab_init(void)
 {
+	if (kebab_init_done)
+		return;
+	kebab_init_done = 1;
 	uint64_t skip = 0;
 	if (PE_parse_boot_argn("kebabnoprobe", &skip, sizeof(skip)) && skip)
 		return;
