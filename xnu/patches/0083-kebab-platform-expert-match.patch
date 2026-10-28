@@ -1,0 +1,17 @@
+--- a/iokit/Kernel/IOPlatformExpert.cpp
++++ b/iokit/Kernel/IOPlatformExpert.cpp
+@@ -34,6 +34,16 @@
+ const char * gIOKernelConfigTables =
+     "("
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
++    "   {"
++    "     'IOClass'         = SweetPlatformExpert;"
++    "     'IOProviderClass' = IOPlatformExpertDevice;"
++    "     'IONameMatch'     = 'oneplus,kebab';"
++    "     'IOProbeScore'    = 10000:32;"
++    "   },"
+     "   {"
+     "     'IOClass'         = SweetPlatformExpert;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+     "     'IONameMatch'     = 'xiaomi,sweet';"
+     "     'IOProbeScore'    = 10000:32;"

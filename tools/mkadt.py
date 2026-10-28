@@ -241,10 +241,15 @@ def build(seed=None, qemu=False, highmem=False, high_base=HIGH_PHYS_BASE,
 
     # Identity of the iPhone X whose userland runs here: compatible[0] is
     # hw.model/hw.target (D22AP), model is hw.machine/hw.product
-    # (iPhone10,3). 'oneplus,kebab' stays for the platform expert matching.
+    # (iPhone10,3). 'xiaomi,sweet' MUST stay: the SweetPlatformExpert
+    # personality (patch 0016) matches IONameMatch = 'xiaomi,sweet' and
+    # without it the kernel panics "Unable to find driver for this
+    # platform: IOPlatformExpert" (the first kebab phone boot hit exactly
+    # that). 'oneplus,kebab' is descriptive; patch 0083 adds a matching
+    # personality for it.
     return node('device-tree', [
         ph(),
-        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('oneplus,kebab') + cstr('qcom,sm8250') + cstr('AppleARM')),
+        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('oneplus,kebab') + cstr('qcom,sm8250') + cstr('AppleARM')),
         ('model', cstr('iPhone10,3')),
         ('target-type', cstr('D22')),
         ('target-sub-type', cstr('D22AP')),
