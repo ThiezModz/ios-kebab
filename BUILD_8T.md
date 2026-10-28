@@ -78,12 +78,13 @@ fdtdump dtb/boot_unpacked/dtb | grep -A4 memory@      # note the RAM banks, step
 
 The kernel is Apple's open-source xnu-8796 (iOS 16 generation) plus this
 repo's patch series. The macOS CI does it because the build needs Xcode's
-headers. Fork this repo (public repos get free macOS runner minutes) and:
+headers. Push this repo to your GitHub account (public repos get free macOS
+runner minutes) and:
 
 ```sh
-gh workflow run xnu.yml -R YOU/ios-sweet        # ios-sweet = this repo's name
-gh run watch -R YOU/ios-sweet
-gh run download -R YOU/ios-sweet -n xnu-kernel -D xnu/out
+gh workflow run xnu.yml -R YOU/ios-kebab        # e.g. ThiezModz/ios-kebab
+gh run watch -R YOU/ios-kebab
+gh run download -R YOU/ios-kebab -n xnu-kernel -D xnu/out
 ls xnu/out      # kernel.development.sweet (the SWEET machine config: the port codename)
 ```
 
