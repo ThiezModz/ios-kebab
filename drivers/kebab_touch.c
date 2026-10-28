@@ -39,10 +39,10 @@ void kebab_touch_init(void)
 	int e1 = sweet_rpmh_vreg_enable("ldoa13", 3008);	/* VERIFY name */
 	int e2 = sweet_rpmh_vreg_enable("ldoc1", 1800);		/* VERIFY name */
 	if (e1 || e2)
-		kprintf("KEBAK TOUCH: RPMh vote failed (%d/%d); S3908 likely "
+		printf("KEBAK TOUCH: RPMh vote failed (%d/%d); S3908 likely "
 			"unpowered until the names are corrected\n", e1, e2);
 	else
-		kprintf("KEBAK TOUCH: touch rails (pm8150_l13 + pm8150a_l1) voted\n");
+		printf("KEBAK TOUCH: touch rails (pm8150_l13 + pm8150a_l1) voted\n");
 
 	/*
 	 * 2. GENI SE13 + S3908 probe + event thread: NOT wired yet (the sweet
@@ -51,6 +51,6 @@ void kebab_touch_init(void)
 	 *    stays quiet - iOS boots without touch, exactly like sweet before
 	 *    its 0060/0063 patches.
 	 */
-	kprintf("KEBAK TOUCH: SE13/S3908 bring-up TODO; sweet_touch_init() not "
+	printf("KEBAK TOUCH: SE13/S3908 bring-up TODO; sweet_touch_init() not "
 		"called (it drives the wrong SE on kebab)\n");
 }

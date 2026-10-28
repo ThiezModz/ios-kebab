@@ -29,9 +29,11 @@
 #include <sys/systm.h>
 #include <kern/debug.h>
 #include <libkern/libkern.h>
-#include <machine/machine_routines.h>	/* ml_io_map */
 
 #include "kebab_sm8250.h"
+
+/* osfmk symbols not exported to the BSD layer (same extern as sweet_ufs.c) */
+extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 /* DPU MDP_LAYER 0 registers (sm8250 dpu hw catalog, VERIFY offsets) */
 #define DPU_SSPP_VIG0_BASE		0x4000
@@ -58,7 +60,7 @@ void kebab_panel_init(void)
 	 * Do not touch DSI0 during continuous splash (sweet's lesson). Probe
 	 * only: report what the DPU says, keep the splash alive.
 	 */
-	kprintf("KEBAK PANEL: AMB655X 1080x2400 cmd-mode DSC, splash fb at 0x%x\n"
+	printf("KEBAK PANEL: AMB655X 1080x2400 cmd-mode DSC, splash fb at 0x%x\n"
 		"KEBAK PANEL: frame updates need the DSI cmd + DSC stream path "
 		"(TODO); splash mode shows the kernel console only\n",
 		SM8250_FB_BASE);

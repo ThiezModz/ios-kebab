@@ -30,7 +30,7 @@ static void kebab_keys_thread(void *unused, wait_result_t wait)
 {
 	(void)unused;
 	(void)wait;
-	kprintf("KEBAK PMIC: keys poll thread up (PON lane not wired yet; "
+	printf("KEBAK PMIC: keys poll thread up (PON lane not wired yet; "
 		"buttons stay dead until the SPMI arbiter lane setup lands)\n");
 	/*
 	 * TODO (first wiring step): program the SPMI arbiter (0xc440000) the
@@ -45,7 +45,7 @@ static void kebab_keys_thread(void *unused, wait_result_t wait)
 
 void kebab_pmic_init(void)
 {
-	kprintf("KEBAK PMIC: PM8150 SID0 PON @ 0x800 (KPDPWR/RESIN), BQ28Z610 "
+	printf("KEBAK PMIC: PM8150 SID0 PON @ 0x800 (KPDPWR/RESIN), BQ28Z610 "
 		"gauge on SE16 @ 0x888000 - both need their bus lane setup\n");
 	kernel_thread_start((thread_continue_t)kebab_keys_thread, NULL, &kebab_keys_thr);
 	thread_deallocate(kebab_keys_thr);

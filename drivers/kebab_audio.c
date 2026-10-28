@@ -22,7 +22,7 @@
 
 void kebab_audio_init(void)
 {
-	kprintf("KEBAK AUDIO: WCD938x held in reset, TFA9874 amps untouched; no "
+	printf("KEBAK AUDIO: WCD938x held in reset, TFA9874 amps untouched; no "
 		"audio device published (matches sweet: mediaserverd runs with "
 		"the VirtualAudio plugin disabled)\n");
 }

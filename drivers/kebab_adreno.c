@@ -25,16 +25,19 @@
  */
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <kern/debug.h>			/* kprintf */
+#include <kern/debug.h>			/* printf via sys/systm.h */
 #include <kern/thread.h>
 #include <libkern/libkern.h>		/* bcopy */
 #include <mach/mach_types.h>
-#include <machine/machine_routines.h>	/* ml_io_map */
-#include <vm/vm_kern.h>			/* kernel_map / kmem_alloc */
-#include <vm/pmap.h>			/* pmap_extract */
+#include <vm/vm_kern.h>			/* kernel_map / kmem_alloc_contig */
+#include <vm/pmap.h>			/* kernel_pmap */
 #include <pexpert/pexpert.h>		/* PE_parse_boot_argn */
 
 #include "kebab_sm8250.h"
+
+/* osfmk symbols not exported to the BSD layer (same externs as sweet_ufs.c) */
+extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 
 /* ---- A6xx core registers (public kgsl offsets, GPUBASE + off) ---- */
 #define A6XX_RBBM_STATUS		0x0210
@@ -108,7 +111,7 @@ static inline void kgpu_wr(struct kebab_gpu *g, uint32_t off, uint32_t v)
 static int kebab_gpu_probe(struct kebab_gpu *g)
 {
 	uint32_t status = kgpu_rd(g, A6XX_RBBM_STATUS);
-	kprintf("KEBAK GPU: RBBM_STATUS 0x%08x%s\n", status,
+	printf("KEBAK GPU: RBBM_STATUS 0x%08x%s\n", status,
 		(status & A6XX_RBBM_STATUS_GPU_BUSY) ? " (busy)" : "");
 	/*
 	 * A real Adreno reads back something sane (a650: 0x8xxxxxxx-ish,
@@ -144,7 +147,7 @@ static void kebab_gpu_power(struct kebab_gpu *g, int on)
 		if (((g->gpucc[GPU_CC_GX_GDSCR / 4] >> 4) & 1) == want)
 			break;
 	}
-	kprintf("KEBAK GPU: GDSC GX 0x%08x CX 0x%08x -> %s\n",
+	printf("KEBAK GPU: GDSC GX 0x%08x CX 0x%08x -> %s\n",
 		g->gpucc[GPU_CC_GX_GDSCR / 4], g->gpucc[GPU_CC_CX_GDSCR / 4],
 		on ? "on" : "off");
 	g->powered = on;
@@ -155,7 +158,7 @@ static void kebab_gpu_power(struct kebab_gpu *g, int on)
 static int kebab_gmu_boot(struct kebab_gpu *g)
 {
 	if (!g->gmu_fw || g->gmu_fw_size < A6XX_GMU_CM3_ITCM_SIZE) {
-		kprintf("KEBAK GPU: no GMU firmware in ADT, running without GMU "
+		printf("KEBAK GPU: no GMU firmware in ADT, running without GMU "
 			"(direct mode; GMU-managed power states unavailable)\n");
 		return -1;
 	}
@@ -173,7 +176,7 @@ static int kebab_gmu_boot(struct kebab_gpu *g)
 			break;
 	}
 	uint32_t hfi = kgpu_rd(g, A6XX_GMU_HFI_CTRL_STATUS);
-	kprintf("KEBAK GPU: GMU firmware %u bytes, HFI_CTRL_STATUS 0x%08x%s\n",
+	printf("KEBAK GPU: GMU firmware %u bytes, HFI_CTRL_STATUS 0x%08x%s\n",
 		g->gmu_fw_size, hfi, (hfi & 2) ? " (booted)" : " (no response)");
 	return (hfi & 2) ? 0 : -1;
 }
@@ -203,7 +206,7 @@ static void kebab_gpu_ring(struct kebab_gpu *g)
 	/* busy-busy: the CP starts fetching from the ring immediately */
 	kgpu_wr(g, A6XX_CP_ME_CNTL, 1);
 	g->ring_on = 1;
-	kprintf("KEBAK GPU: CP ring on, %u dwords at 0x%llx\n",
+	printf("KEBAK GPU: CP ring on, %u dwords at 0x%llx\n",
 		g->rb_size, g->rb_pa);
 }
 
@@ -217,7 +220,7 @@ static void kebab_gpu_wait(struct kebab_gpu *g)
 		if (rptr == g->rb_wptr && !(kgpu_rd(g, A6XX_CP_ME_STAT) & A6XX_CP_ME_STAT_BUSY))
 			return;
 	}
-	kprintf("KEBAK GPU: wait timed out (wptr 0x%x rptr 0x%x me_stat 0x%x)\n",
+	printf("KEBAK GPU: wait timed out (wptr 0x%x rptr 0x%x me_stat 0x%x)\n",
 		g->rb_wptr, kgpu_rd(g, A6XX_CP_RB_RPTR), kgpu_rd(g, A6XX_CP_ME_STAT));
 }
 
@@ -262,28 +265,30 @@ int kebab_gpu_blit(uint64_t dst_pa, uint64_t src_pa, uint32_t bytes)
 static void kebab_gpu_test(void)
 {
 	struct kebab_gpu *g = &kebab_gpu_state;
-	/* two wired pages in kernel memory: src pattern -> dst via GPU blit */
+	/* two wired pages in kernel memory: src pattern -> dst via GPU blit
+	 * (allocated with the same contig call sweet_ufs.c uses for its DMA) */
 	vm_offset_t src_v = 0, dst_v = 0;
 	uint64_t src_pa = 0, dst_pa = 0;
-	if (kmem_alloc(kernel_map, &src_v, 0x4000, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS ||
-	    kmem_alloc(kernel_map, &dst_v, 0x4000, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-		kprintf("KEBAK GPU: test alloc failed\n");
+	if (kmem_alloc_contig(kernel_map, &src_v, 0x4000, PAGE_MASK, 0, 0,
+	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS ||
+	    kmem_alloc_contig(kernel_map, &dst_v, 0x4000, PAGE_MASK, 0, 0,
+	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		printf("KEBAK GPU: test alloc failed\n");
 		return;
 	}
 	for (int i = 0; i < 0x4000 / 4; i++)
 		((uint32_t *)src_v)[i] = 0x5a5a0000u + (uint32_t)i;
-	src_pa = pmap_extract(kernel_pmap, src_v);
-	dst_pa = pmap_extract(kernel_pmap, dst_v);
+	src_pa = ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)src_v));
+	dst_pa = ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)dst_v));
 	if (!src_pa || !dst_pa) {
-		kprintf("KEBAK GPU: test pmap_extract failed\n");
+		printf("KEBAK GPU: test pmap_find_phys failed\n");
 		return;
 	}
 	int rc = kebab_gpu_blit(dst_pa, src_pa, 0x4000);
 	int ok = !rc && !bcmp((void *)dst_v, (void *)src_v, 0x4000);
-	kprintf("KEBAK GPU: blit self-test %s (rc %d, src 0x%llx -> dst 0x%llx)\n",
+	printf("KEBAK GPU: blit self-test %s (rc %d, src 0x%llx -> dst 0x%llx)\n",
 		ok ? "PASS" : "FAIL", rc, src_pa, dst_pa);
-	kmem_free(kernel_map, src_v, 0x4000);
-	kmem_free(kernel_map, dst_v, 0x4000);
+	/* one-time boot allocations: deliberately not freed (bring-up) */
 }
 
 /* ---- GMU firmware ----
@@ -311,14 +316,14 @@ void kebab_gpu_init(void)
 	g->gpu = (volatile uint32_t *)ml_io_map(SM8250_GPU_BASE, SM8250_GPU_SIZE);
 	g->gpucc = (volatile uint32_t *)ml_io_map(SM8250_GPU_CC, SM8250_GPU_CC_SIZE);
 	if (!g->gpu || !g->gpucc) {
-		kprintf("KEBAK GPU: mmap failed\n");
+		printf("KEBAK GPU: mmap failed\n");
 		return;
 	}
 	g->gmu_fw = kebab_gmu_fw_ptr;
 	g->gmu_fw_size = kebab_gmu_fw_ptr_size;
 
 	if (kebab_gpu_probe(g)) {
-		kprintf("KEBAK GPU: no Adreno 650 at 0x%x (QEMU run?)\n", SM8250_GPU_BASE);
+		printf("KEBAK GPU: no Adreno 650 at 0x%x (QEMU run?)\n", SM8250_GPU_BASE);
 		return;
 	}
 	kebab_gpu_power(g, 1);
@@ -326,15 +331,16 @@ void kebab_gpu_init(void)
 
 	/* ring buffer: wired kernel memory, physical, 64K dwords */
 	vm_offset_t rb_v = 0;
-	if (kmem_alloc(kernel_map, &rb_v, 0x40000, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-		kprintf("KEBAK GPU: ring alloc failed\n");
+	if (kmem_alloc_contig(kernel_map, &rb_v, 0x40000, PAGE_MASK, 0, 0,
+	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		printf("KEBAK GPU: ring alloc failed\n");
 		return;
 	}
 	g->rb = (uint32_t *)rb_v;
 	g->rb_size = 0x10000;
-	g->rb_pa = pmap_extract(kernel_pmap, rb_v);
+	g->rb_pa = ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)rb_v));
 	if (!g->rb_pa) {
-		kprintf("KEBAK GPU: ring pmap_extract failed\n");
+		printf("KEBAK GPU: ring pmap_find_phys failed\n");
 		return;
 	}
 	kebab_gpu_ring(g);

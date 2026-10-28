@@ -11,20 +11,22 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <kern/debug.h>
-#include <machine/machine_routines.h>	/* ml_io_map */
 
 #include "kebab_sm8250.h"
+
+/* osfmk symbols not exported to the BSD layer (same extern as sweet_ufs.c) */
+extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 void kebab_usb_init(void)
 {
 	volatile uint32_t *wrap = (volatile uint32_t *)ml_io_map(SM8250_USB1_WRAPPER, 0x400);
 	if (!wrap) {
-		kprintf("KEBAK USB: wrapper mmap failed\n");
+		printf("KEBAK USB: wrapper mmap failed\n");
 		return;
 	}
 	/* GSNPSID of the DWC3 behind the wrapper: expect 0x5533320a (v3.20a)
 	 * like sweet's, VERIFY on the phone */
-	kprintf("KEBAK USB: wrapper 0x%x, DWC3 GSNPSID 0x%08x\n",
+	printf("KEBAK USB: wrapper 0x%x, DWC3 GSNPSID 0x%08x\n",
 		SM8250_USB1_WRAPPER, *(volatile uint32_t *)ml_io_map(SM8250_USB1_DWC3, 0x1000));
 	/*
 	 * Hand off to the existing sweet USB bring-up (patches 0072-0077,

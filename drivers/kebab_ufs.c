@@ -12,10 +12,12 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <kern/debug.h>
-#include <machine/machine_routines.h>	/* ml_io_map */
 #include <pexpert/pexpert.h>	/* PE_parse_boot_argn */
 
 #include "kebab_sm8250.h"
+
+/* osfmk symbols not exported to the BSD layer (same extern as sweet_ufs.c) */
+extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 extern void kebab_gpu_init(void);
 extern void kebab_panel_init(void);
@@ -38,7 +40,7 @@ void kebab_init(void)
 	if (PE_parse_boot_argn("kebabnoprobe", &skip, sizeof(skip)) && skip)
 		return;
 
-	kprintf("KEBAK: OnePlus 8T (SM8250) device bring-up\n");
+	printf("KEBAK: OnePlus 8T (SM8250) device bring-up\n");
 	kebab_ufs_clocks();		/* report what ABL left on */
 	kebab_panel_init();
 	kebab_pmic_init();
@@ -60,13 +62,13 @@ void kebab_ufs_clocks(void)
 {
 	volatile uint32_t *gcc = (volatile uint32_t *)ml_io_map(SM8250_GCC, 0x100000);
 	if (!gcc) {
-		kprintf("KEBAK UFS: GCC mmap failed\n");
+		printf("KEBAK UFS: GCC mmap failed\n");
 		return;
 	}
 	/* GCC clock enable registers hold bit 0 = root enabled (VERIFY offsets) */
 	uint32_t ufs_phy = gcc[SM8250_GCC_UFS_PHY_AXI / 4];
 	uint32_t ufs_ice = gcc[SM8250_GCC_UFS_ICE_CORE / 4];
-	kprintf("KEBAK UFS: phy_axi 0x%08x ice_core 0x%08x (VERIFY offsets)\n",
+	printf("KEBAK UFS: phy_axi 0x%08x ice_core 0x%08x (VERIFY offsets)\n",
 		ufs_phy, ufs_ice);
 	if (!(ufs_phy & 1))
 		gcc[SM8250_GCC_UFS_PHY_AXI / 4] = ufs_phy | 1;
