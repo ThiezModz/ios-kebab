@@ -16,7 +16,6 @@ mkdir -p bsd/dev/kebab
 cp "$here"/kebab_adreno.c bsd/dev/kebab/
 cp "$here"/kebab_panel.c bsd/dev/kebab/
 cp "$here"/kebab_touch.c bsd/dev/kebab/
-cp "$here"/kebab_keys.c bsd/dev/kebab/
 cp "$here"/kebab_pmic.c bsd/dev/kebab/
 cp "$here"/kebab_ufs.c bsd/dev/kebab/
 cp "$here"/kebab_usb.c bsd/dev/kebab/
