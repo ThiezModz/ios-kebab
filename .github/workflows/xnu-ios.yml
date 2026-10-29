@@ -1,0 +1,109 @@
+name: xnu-ios
+
+# Build the ios-kebab XNU as an iOS-target kernel (SDKROOT=iphoneos), the
+# way hakios does (oosexgang/hakios-xnu-kernel). The dxb macOS build keeps
+# the arm64 trust-cache gate compiled in (XNU_TARGET_OS_OSX), which rejects
+# every dyld shared cache file and stalls launchd in QEMU with
+# shared_region_check_np = ENOMEM. The iPhoneOS SDK build compiles the gate
+# out; the CSR/root checks then follow the iOS path, and the full iOS
+# userspace (launchd -> SpringBoard) can boot in QEMU and on the phone.
+# The macOS build (xnu.yml) stays for the phone fastboot path.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "xnu/patches/**"
+      - "drivers/**"
+      - ".github/workflows/xnu-ios.yml"
+
+concurrency:
+  group: xnu-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deps
+        run: |
+          brew install jq gum bash cmake ninja ldid 2>/dev/null || true
+          # Xcode is preinstalled; its cctools do the assembling/linking
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | head -1)
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Fetch the iPhoneOS SDK (16.5, the xnu-8796 era)
+        run: |
+          git clone -q --depth 1 https://github.com/theos/sdks sdk-theos
+          ls sdk-theos | grep -i iphoneos
+          SDK=$(ls -d sdk-theos/iPhoneOS16.5.sdk | head -1)
+          echo "IOS_SDK=$PWD/$SDK" >> "$GITHUB_ENV"
+
+      - name: Fetch xnu
+        run: |
+          # the same apple-oss xnu the dxb build uses (8796.141.3)
+          git clone -q --depth 1 --branch xnu-8796.141.3 \
+            https://github.com/apple-oss-distributions/xnu.git xnu-src || \
+          git clone -q --depth 1 https://github.com/apple-oss-distributions/xnu.git xnu-src
+          cd xnu-src
+          # the kebab port expects the EXTERNAL_HEADERS the patch series references
+          git log --oneline -1
+
+      - name: Stage + patch
+        run: |
+          cp xnu/patches/*.patch xnu/patches/*.sh xnu-src/
+          cd xnu-src
+          for s in *.sh; do
+            echo "== $s"; bash "$s" || { echo "stager $s failed"; exit 1; }
+          done
+          for p in *.patch; do
+            if git apply --check "$p" 2>/dev/null; then
+              git apply "$p" && echo "applied $p"
+            else
+              echo "WARNING: skipping $p (does not apply)" | tee -a ../skipped.txt
+            fi
+          done
+          ls bsd/dev/kebab/ | head
+
+      - name: Build (iOS target, SWEET machine config)
+        working-directory: xnu-src
+        run: |
+          # xnu-clang: the Xcode clang targeting arm64-apple-ios16
+          cat > /usr/local/bin/xnu-clang <<EOF
+          #!/bin/bash
+          exec xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 \\
+            -isysroot "\$IOS_SDK" "\$@"
+          EOF
+          cat > /usr/local/bin/xnu-clang++ <<EOF
+          #!/bin/bash
+          exec xcrun --sdk iphoneos clang++ -target arm64-apple-ios16.0 \\
+            -isysroot "\$IOS_SDK" "\$@"
+          EOF
+          chmod +x /usr/local/bin/xnu-clang /usr/local/bin/xnu-clang++
+          make SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
+            KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 \
+            BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 CC=xnu-clang CXX=xnu-clang++ \
+            LOGCOLORS=n all 2>&1 | tail -40
+          ls BUILD/obj/DEVELOPMENT_ARM64_SWEET/ | head
+
+      - name: Collect
+        if: always()
+        run: |
+          mkdir -p out
+          cp xnu-src/BUILD/obj/DEVELOPMENT_ARM64_SWEET/mach.development.sweet out/kernel.development.sweet 2>/dev/null || \
+            cp xnu-src/BUILD/obj/DEVELOPMENT_ARM64_SWEET/mach.development out/kernel.development.sweet 2>/dev/null || true
+          ls -la out
+          (cd out && shasum -a 256 kernel.* > SHA256SUMS) || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-kernel-ios
+          path: out/
+          if-no-files-found: warn
