@@ -16,7 +16,7 @@
 +	 * never attaches UFS, so start the kebab chain here instead. kebab_init
 +	 * is one-shot (guarded), so ufsroot0 boots keep the original path.
 +	 */
-+	extern void kebab_init(void);
++	extern "C" void kebab_init(void);
 +	kebab_init();
  	return true;
  }
