@@ -98,6 +98,19 @@ loader the iOS layout; kebab's loader is the fixed point.
   Python 3.14; the dSYM lldbmacros step failed after the link). Same fix
   hakios carries (identical base file).
 
+- **0099**: security/mac_base.c keeps mac_policy_list +
+  mac_policy_static_entries writable for SWEET (iOS build). The hybrid
+  kernel's second QEMU boot panicked in mac_policy_register (bsd_init →
+  sweet_amfi_policy_register): "Unexpected fault in kernel static region",
+  far 0xfffffe000728f63c = mac_policy_list+0x14 in __DATA_CONST,__const
+  (verified: xnu-sym.py + Mach-O segment walk), ESR 0x9600004f = L3
+  permission fault. The !XNU_TARGET_OS_OSX build places them
+  SECURITY_READ_ONLY_LATE (__DATA,__const, link-renamed into the r--
+  __DATA_CONST segment) and machine_lockdown() (kernel_startup_bootstrap,
+  before bsd_init) re-applies RNX. SWEET has no KTRR/CTRR, so the RO
+  placement is pure downside; the macOS branch keeps the list RW.
+  sweet_amfi's own conf/handle are plain static (RW) — fine.
+
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
 
