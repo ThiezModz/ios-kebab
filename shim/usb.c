@@ -50,6 +50,23 @@
 #define TRBCTL_DATA	(5u << 4)
 #define TRBCTL_NORMAL	(1u << 4)
 
+/* The DMA area lives in the shim's image, which the MMU maps cacheable
+ * write-back; the DWC3's DMA is not coherent, so every buffer handed to
+ * it is cleaned (writes) or invalidated (reads) over 64-byte lines. */
+static void clean_range(void *p, unsigned n)
+{
+	for (uintptr_t a = (uintptr_t)p; a < (uintptr_t)p + n; a += 64)
+		__asm__ volatile("dc cvac, %0" :: "r"(a));
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+static void inv_range(void *p, unsigned n)
+{
+	for (uintptr_t a = (uintptr_t)p; a < (uintptr_t)p + n; a += 64)
+		__asm__ volatile("dc ivac, %0" :: "r"(a));
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
 static void ud_delay_ms(unsigned ms)
 {
 	uint64_t f = 0;
@@ -145,6 +162,9 @@ static void ud_start_trb(unsigned phys_ep, uint32_t trb_off, uint32_t buf_off,
 	t[1] = (uint32_t)(bpa >> 32);
 	t[2] = len;
 	t[3] = ctl | TRB_HWO | TRB_LST | TRB_ISP_IMI | TRB_IOC;
+	if (len)
+		clean_range((void *)(uintptr_t)bpa, len);
+	clean_range((void *)t, 16);
 	wr32(DWC3_DEPCMDPAR0(phys_ep), 0);
 	wr32(DWC3_DEPCMDPAR1(phys_ep), 0);
 	wr32(DWC3_DEPCMDPAR2(phys_ep), 0);
@@ -182,6 +202,7 @@ static void arm_one(unsigned k)
 	t[1] = (uint32_t)(bpa >> 32);
 	t[2] = RING_TRB_BYTES;
 	t[3] = TRBCTL_NORMAL | TRB_HWO | TRB_LST | TRB_ISP_IMI | TRB_IOC;
+	clean_range((void *)t, 16);
 	uint64_t tpa = (uintptr_t)t;
 	wr32(DWC3_DEPCMDPAR0(2), (uint32_t)(tpa >> 32));
 	wr32(DWC3_DEPCMDPAR1(2), (uint32_t)tpa);
@@ -361,6 +382,7 @@ static void fb_command(uint32_t len)
 
 static void ep0_setup(void)
 {
+	inv_range((void *)((uintptr_t)&ud + UD_SETUP_OFF), 16);
 	const uint8_t *st = (const uint8_t *)((uintptr_t)&ud + UD_SETUP_OFF);
 	con_hex2("USB", "setup", st[0] | st[1] << 8, "val", st[2] | st[3] << 8);
 	uint8_t *data = (uint8_t *)((uintptr_t)&ud + UD_DATA_OFF);
@@ -402,6 +424,7 @@ static void ep0_setup(void)
 	if (length && n)
 		n = length < n ? length : n;
 	if (n) {
+		clean_range((void *)((uintptr_t)&ud + UD_DATA_OFF), n);
 		ud_start_trb(data_in ? 1 : 0, data_in ? UD_TRB1_OFF : UD_TRB0_OFF,
 		    UD_DATA_OFF, n, TRBCTL_DATA);
 	}
@@ -479,6 +502,7 @@ void usb_server(void)
 		uint32_t cnt = rd32(dwc + DWC3_GEVNTCOUNT);
 		while (evt_pos != cnt) {
 			volatile uint32_t *e = (volatile uint32_t *)&ud.evt[evt_pos & 0x3fc];
+			inv_range((void *)e, 16);
 			uint32_t status = e[2];
 			uint32_t phys_ep = status & 0x1f;
 			uint32_t evt_type = (status >> 6) & 0xf;
