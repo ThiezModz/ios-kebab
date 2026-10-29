@@ -176,6 +176,22 @@ jobs:
           libtool -static -o "$IOS_SDK/usr/local/lib/kernel/libfirehose_kernel.a" /tmp/firehose_buffer.o
           ls -la "$IOS_SDK/usr/local/lib/kernel/"
 
+      - name: libcc_kext.a from the KDK (the kernel links -lcc_kext)
+        run: |
+          # LD_KERNEL_LIBS = -lcc_kext (makedefs/MakeInc.def); the public SDK
+          # lacks the archive, the KDK ships it. Same download the dxb build
+          # uses (dortania/KdkSupportPkg manifest); extract just the one file.
+          KDK_URL=$(curl -s "https://raw.githubusercontent.com/dortania/KdkSupportPkg/gh-pages/manifest.json" | \
+            jq -r '.[] | select(.name=="Kernel Debug Kit 13.5 build 22G74") | .url')
+          curl -sL --retry 3 -o /tmp/KDK.dmg "$KDK_URL"
+          hdiutil attach /tmp/KDK.dmg -nobrowse -quiet
+          pkgutil --expand-full "/Volumes/Kernel Debug Kit/KernelDebugKit.pkg" /tmp/kdk-pkg
+          LIB=$(find /tmp/kdk-pkg -name libcc_kext.a | head -1)
+          test -n "$LIB" || { echo "no libcc_kext.a in the KDK pkg"; exit 1; }
+          cp "$LIB" "$IOS_SDK/usr/local/lib/kernel/libcc_kext.a"
+          hdiutil detach "/Volumes/Kernel Debug Kit" -quiet || true
+          ls -la "$IOS_SDK/usr/local/lib/kernel/"
+
       - name: Build (iOS target, SWEET machine config)
         working-directory: xnu-src
         run: |
