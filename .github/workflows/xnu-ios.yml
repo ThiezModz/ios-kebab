@@ -89,7 +89,7 @@ jobs:
           make SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
             KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 \
             BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 CC=xnu-clang CXX=xnu-clang++ \
-            LOGCOLORS=n all 2>&1 | tail -40
+            LOGCOLORS=n all
           ls BUILD/obj/DEVELOPMENT_ARM64_SWEET/ | head
 
       - name: Collect
