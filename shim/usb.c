@@ -151,6 +151,8 @@ static int dl_active;
 static char fb_cmd[256];
 
 static uint32_t evt_pos;
+static unsigned ep0_state;
+enum { EP0_SETUP, EP0_DATA, EP0_WAIT_STATUS2, EP0_WAIT_STATUS3, EP0_STATUS };
 
 static void ud_start_trb(unsigned phys_ep, uint32_t trb_off, uint32_t buf_off,
     uint32_t len, uint32_t ctl)
@@ -419,17 +421,19 @@ static void ep0_setup(void)
 		ud_stall();
 		return;
 	}
-	/* data stage (if any), then the status stage on the other endpoint */
-	uint32_t status = data_in ? TRBCTL_STATUS2 : TRBCTL_STATUS3;
-	if (length && n)
-		n = length < n ? length : n;
-	if (n) {
-		clean_range((void *)((uintptr_t)&ud + UD_DATA_OFF), n);
-		ud_start_trb(data_in ? 1 : 0, data_in ? UD_TRB1_OFF : UD_TRB0_OFF,
-		    UD_DATA_OFF, n, TRBCTL_DATA);
+	if (length == 0) {
+		ep0_state = EP0_WAIT_STATUS2;	/* status stage comes on XferNotReady */
+		return;
 	}
-	ud_start_trb(data_in ? 0 : 1, data_in ? UD_TRB0_OFF : UD_TRB1_OFF,
-	    UD_DATA_OFF, 0, status);
+	ep0_state = EP0_DATA;
+	if (data_in) {
+		if (n > length)
+			n = length;
+		clean_range((void *)((uintptr_t)&ud + UD_DATA_OFF), n);
+		ud_start_trb(1, UD_TRB1_OFF, UD_DATA_OFF, n, TRBCTL_DATA);
+	} else {
+		ud_start_trb(0, UD_TRB0_OFF, UD_DATA_OFF, 64, TRBCTL_DATA);
+	}
 }
 
 
@@ -501,6 +505,7 @@ void usb_server(void)
 		return;
 	}
 	wr32(dwc + DWC3_DALEPENA, 0x3);
+	ep0_state = EP0_SETUP;
 	ud_start_setup();
 
 	wr32(dwc + DWC3_DCTL, rd32(dwc + DWC3_DCTL) | DCTL_RUN_STOP);
@@ -514,26 +519,22 @@ void usb_server(void)
 		while (evt_pos != cnt) {
 			volatile uint32_t *e = (volatile uint32_t *)&ud.evt[evt_pos & 0x3fc];
 			inv_range((void *)e, 16);
-			uint32_t status = e[2];
-			uint32_t phys_ep = status & 0x1f;
-			uint32_t evt_type = (status >> 6) & 0xf;
-			uint32_t trb_len = e[3] >> 16;
+			uint32_t ev = e[0];
+			uint32_t trb_len = e[3] >> 16;	/* word 3 = the control word */
 			evt_pos += 4;
 			wr32(dwc + DWC3_GEVNTCOUNT, evt_pos & 0xffff);
 
-			if (status & 1) {	/* device event */
-				uint32_t dtype = (status >> 8) & 0xf;
-				if (dtype == 1) {	/* USB reset */
+			if (ev & 1) {	/* device event (the sweet decode) */
+				uint32_t dtype = (ev >> 8) & 0xf;
+				if (dtype == 1) {
 					con_str("USB", "bus reset");
 					wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~(0x7fu << 3));
-				} else if (dtype == 2) {	/* connect done */
+				} else if (dtype == 2) {
 					con_str("USB", "connect done");
-					/* ep0 max packet 64 at high speed; arm the bulk ring */
 					ud_epcmd(0, DEPCMD_SETEPCONFIG, (0u << 1) | (64u << 3) | (2u << 30),
 					    (1u << 8) | (1u << 10) | (0u << 25), 0);
 					ud_epcmd(1, DEPCMD_SETEPCONFIG, (0u << 1) | (64u << 3) | (2u << 30),
 					    (1u << 8) | (1u << 10) | (1u << 25), 0);
-					/* ep1 bulk in/out */
 					ud_epcmd(2, DEPCMD_DEPSTARTCFG, 1, 2, 0);
 					ud_epcmd(2, DEPCMD_SETEPCONFIG, (2u << 1) | (512u << 3),
 					    (1u << 8) | (1u << 10) | (0u << 25), 0);
@@ -547,23 +548,36 @@ void usb_server(void)
 				}
 				continue;
 			}
-			if (evt_type == 0x4) {	/* XferNotReady: arm the setup / the bulk ring */
-				if (phys_ep == 0)
-					ud_start_setup();
-				else if (phys_ep == 2)
-					arm_ring();
+			uint32_t phys_ep = (ev >> 1) & 0x1f;
+			uint32_t evt_type = (ev >> 6) & 0xf;
+			uint32_t evt_status = (ev >> 12) & 0xf;
+
+			if (evt_type == 3 && evt_status == 2) {	/* XferNotReady, control status */
+				if (ep0_state == EP0_WAIT_STATUS2 || ep0_state == EP0_WAIT_STATUS3) {
+					uint32_t ctl = ep0_state == EP0_WAIT_STATUS3 ? TRBCTL_STATUS3 : TRBCTL_STATUS2;
+					ep0_state = EP0_STATUS;
+					ud_start_trb(phys_ep, phys_ep ? UD_TRB1_OFF : UD_TRB0_OFF,
+					    UD_DATA_OFF, 0, ctl);
+				}
 				continue;
 			}
-			if (evt_type != 0x0)	/* not XferComplete */
-				continue;
-			if (phys_ep == 0) {	/* ep0 OUT done: a setup packet */
-				ep0_setup();
-			} else if (phys_ep == 1) {	/* ep0 IN done: next setup */
+			if (evt_type == 4 && phys_ep == 0) {	/* XferNotReady: arm the setup */
 				ud_start_setup();
+				continue;
+			}
+			if (evt_type != 1)	/* not XferComplete */
+				continue;
+			if (phys_ep == 0 || phys_ep == 1) {
+				if (ep0_state == EP0_SETUP) {
+					ep0_setup();
+				} else if (ep0_state == EP0_DATA) {
+					ep0_state = EP0_WAIT_STATUS3;
+				} else if (ep0_state == EP0_STATUS) {
+					ep0_state = EP0_SETUP;
+					ud_start_setup();
+				}
 			} else if (phys_ep == 2) {	/* ep1 OUT chunk */
-				uint32_t k = (e[1] - (uint32_t)(uintptr_t)&ud.trb2) / 16;	/* TRB index */
-				uintptr_t buf = (uintptr_t)&ud.trb2[k];
-				(void)buf;
+				uint32_t k = (e[1] - (uint32_t)(uintptr_t)&ud.trb2) / 16;
 				if (trb_len) {
 					if (dl_active) {
 						dl_got += trb_len;
@@ -573,14 +587,12 @@ void usb_server(void)
 							fb_reply("OKAY");
 						}
 					} else {
-						/* a command transfer: the bytes are at the TRB's buffer */
 						const uint8_t *src = (const uint8_t *)((uintptr_t)&ud.trb2[k]);
 						uint32_t n = trb_len < sizeof(fb_cmd) - 1 ? trb_len : sizeof(fb_cmd) - 1;
 						kbcopy(fb_cmd, src, n);
 						fb_command(n);
 					}
 				}
-				/* re-arm the completed TRB at the cursor (commands advance it too) */
 				arm_one(k);
 			} else if (phys_ep == 3) {	/* ep1 IN done */
 				;
