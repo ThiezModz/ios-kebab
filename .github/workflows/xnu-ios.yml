@@ -60,12 +60,15 @@ jobs:
 
       - name: Stage + patch
         run: |
-          cp xnu/patches/*.patch xnu/patches/*.sh xnu-src/
+          # the stagers assume the dxb layout: the scripts live in a
+          # patches/ subdir and the drivers sit two levels up from it
+          mkdir -p xnu-src/patches
+          cp xnu/patches/*.patch xnu/patches/*.sh xnu-src/patches/
           cd xnu-src
-          for s in *.sh; do
+          for s in patches/*.sh; do
             echo "== $s"; bash "$s" || { echo "stager $s failed"; exit 1; }
           done
-          for p in *.patch; do
+          for p in patches/*.patch; do
             if git apply --check "$p" 2>/dev/null; then
               git apply "$p" && echo "applied $p"
             else
