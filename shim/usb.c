@@ -49,6 +49,19 @@
 #define TRBCTL_DATA	(5u << 4)
 #define TRBCTL_NORMAL	(1u << 4)
 
+static void ud_delay_ms(unsigned ms)
+{
+	uint64_t f = 0;
+	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+	uint64_t t0 = 0, t1 = 0;
+	__asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(t0));
+	for (;;) {
+		__asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(t1));
+		if (t1 - t0 >= f / 1000 * ms)
+			break;
+	}
+}
+
 /* The shim links without libc; __builtin_strcmp still emits a call for
  * non-constant strings, so the one string helper lives here. */
 static unsigned kstrlen(const char *s)
@@ -430,6 +443,21 @@ void usb_server(void)
 		;
 	wr32(dwc + DWC3_GCTL, saved_gctl & ~GCTL_CORESOFTRESET);
 	wr32(dwc + DWC3_GUSB2PHYCFG, saved_phycfg);
+	con_hex2("USB", "gctl", rd32(dwc + DWC3_GCTL), "phy", rd32(dwc + DWC3_GUSB2PHYCFG));
+
+	/* the Qualcomm wrapper's QSCRATCH block (Linux dwc3-qcom.c offsets) */
+	con_hex2("USB", "qs0", rd32(0x0a6f8800 + 0x00), "qs8", rd32(0x0a6f8800 + 0x08));
+	con_hex2("USB", "qs10", rd32(0x0a6f8800 + 0x10), "qs30", rd32(0x0a6f8800 + 0x30));
+
+	/* explicit pull-down/pull-up: the halted state drops the link so the
+	 * host re-enumerates with OUR descriptors (the reset alone keeps the
+	 * PHY line up and the host reuses ABL's cached identity) */
+	wr32(dwc + DWC3_DCTL, rd32(dwc + DWC3_DCTL) & ~DCTL_RUN_STOP);
+	for (int i = 0; i < 1000000 && !(rd32(dwc + DWC3_DSTS) & DSTS_DEVCTRLHLT); i++)
+		;
+	ud_delay_ms(200);
+	con_hex("USB", rd32(dwc + DWC3_DSTS));
+
 	/* USB 2.0 high-speed (the 8T port), like the sweet port */
 	wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~7u | 3);
 
