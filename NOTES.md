@@ -79,6 +79,25 @@ for p in patches/*.patch; do git apply --check "$p" && git apply "$p" || echo SK
 Generate new patch hunks against THIS tree (the memory's CI gotcha: context
 must reflect the tree after all earlier patches).
 
+**First iOS-kernel QEMU boot (run 40961942772 artifact, 2026-10-29 ~23:00):**
+kernel linked and booted to arm_vm_init, then panicked:
+`sweet_early_map_final (arm_vm_init.c): assert L1 is a TABLE`. Cause: the
+iPhoneOS build links at 0xfffffff007004000 (LOW_GLOBAL 0xfffffff000000000,
+no ARM_LARGE_MEMORY) while the whole kebab boot chain is built on the
+macOS kernel layout (gVirtBase 0xfffffe0006000000 from the ADT).
+**Fix (the hybrid):** the xnu-ios make line overrides
+`ARM64_LINK_ADDR=0xfffffe0007004000 ARM64_PLKSEG_ADDR=0xfffffe0004004000
+LARGE_MEMORY_DEFINE=-DARM_LARGE_MEMORY=1` — PLATFORM stays iPhoneOS
+(XNU_TARGET_OS_IOS: no trust-cache gate, iOS syscall/AMFI paths, iOS user
+VA layout incl. SHARED_REGION_BASE 0x180000000 which is arch-defined, not
+LARGE_MEMORY-gated) but the kernel-space VA layout is the macOS one the
+loader/shim/QEMU/gdb math expect. hakios instead taught their own UEFI
+loader the iOS layout; kebab's loader is the fixed point.
+- **0098**: tools/lldbmacros/core/syntax_checker.py drops its own dir from
+  sys.path (xnu's core/collections.py shadows stdlib collections on
+  Python 3.14; the dSYM lldbmacros step failed after the link). Same fix
+  hakios carries (identical base file).
+
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
 
