@@ -23,6 +23,7 @@ concurrency:
 
 env:
   MACHINE_CONFIG: SWEET
+  MACOS_VERSION: "13.5"
 
 jobs:
   build:
