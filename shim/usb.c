@@ -37,6 +37,7 @@
 #define DEPCMD_SETSTALL		4
 #define DEPCMD_STARTTRANSFER	6
 #define DEPCMD_DEPSTARTCFG	9
+#define DEPCMD_SETEPCONFIG	1
 #define DEPCMD_CMDACT		(1u << 10)
 
 #define TRB_HWO		(1u << 0)
@@ -154,7 +155,7 @@ static void ud_start_trb(unsigned phys_ep, uint32_t trb_off, uint32_t buf_off,
 	wr32(DWC3_DEPCMD(phys_ep), DEPCMD_STARTTRANSFER | DEPCMD_CMDACT);
 }
 
-static void ud_epcmd(unsigned phys_ep, uint32_t cmd, uint32_t p0, uint32_t p1, uint32_t p2)
+static int ud_epcmd(unsigned phys_ep, uint32_t cmd, uint32_t p0, uint32_t p1, uint32_t p2)
 {
 	wr32(DWC3_DEPCMDPAR0(phys_ep), p0);
 	wr32(DWC3_DEPCMDPAR1(phys_ep), p1);
@@ -162,9 +163,10 @@ static void ud_epcmd(unsigned phys_ep, uint32_t cmd, uint32_t p0, uint32_t p1, u
 	wr32(DWC3_DEPCMD(phys_ep), cmd | DEPCMD_CMDACT);
 	for (int i = 0; i < 100000; i++) {
 		if (!(rd32(DWC3_DEPCMD(phys_ep)) & DEPCMD_CMDACT))
-			return;
+			return 0;
 	}
 	con_hex2("USB", "epcmd timeout ep", phys_ep, "cmd", cmd & 0xf);
+	return -1;
 }
 
 /* Arm TRB k of the bulk OUT ring at the cursor (advancing it); k's bytes
@@ -429,62 +431,47 @@ void usb_server(void)
 {
 	uintptr_t dwc = DWC3_BASE;
 
-	con_str("USB", "server: adopting the ABL gadget");
+	con_str("USB", "server: adopting the ABL gadget (sweet sequence)");
 
-	/* Full core reset FIRST: it wipes the event ring and the endpoint
-	 * state, so everything else is programmed after it. The reset also
-	 * drops the PHY link so the host re-enumerates with our descriptors.
-	 * The reset zeroes GCTL and GUSB2PHYCFG (the PHY interface config
-	 * ABL programmed), so those are saved and restored. */
-	uint32_t saved_gctl = rd32(dwc + DWC3_GCTL);
-	uint32_t saved_phycfg = rd32(dwc + DWC3_GUSB2PHYCFG);
-	wr32(dwc + DWC3_GCTL, saved_gctl | GCTL_CORESOFTRESET);
-	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_GCTL) & GCTL_CORESOFTRESET); i++)
+	/* Device controller soft reset; the PHY and the global setup stay as
+	 * ABL left them (the core reset would take the PHY config down too). */
+	wr32(dwc + DWC3_DCTL, DCTL_CSFTRST);
+	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_DCTL) & DCTL_CSFTRST); i++)
 		;
-	wr32(dwc + DWC3_GCTL, saved_gctl & ~GCTL_CORESOFTRESET);
-	wr32(dwc + DWC3_GUSB2PHYCFG, saved_phycfg);
-	con_hex2("USB", "gctl", rd32(dwc + DWC3_GCTL), "phy", rd32(dwc + DWC3_GUSB2PHYCFG));
+	if (rd32(dwc + DWC3_DCTL) & DCTL_CSFTRST) {
+		con_str("USB", "soft reset STUCK");
+		return;
+	}
 
-	/* the Qualcomm wrapper's QSCRATCH block (Linux dwc3-qcom.c offsets) */
-	con_hex2("USB", "qs0", rd32(0x0a6f8800 + 0x00), "qs8", rd32(0x0a6f8800 + 0x08));
-	con_hex2("USB", "qs10", rd32(0x0a6f8800 + 0x10), "qs30", rd32(0x0a6f8800 + 0x30));
-
-	/* explicit pull-down/pull-up: the halted state drops the link so the
-	 * host re-enumerates with OUR descriptors (the reset alone keeps the
-	 * PHY line up and the host reuses ABL's cached identity) */
-	wr32(dwc + DWC3_DCTL, rd32(dwc + DWC3_DCTL) & ~DCTL_RUN_STOP);
-	for (int i = 0; i < 1000000 && !(rd32(dwc + DWC3_DSTS) & DSTS_DEVCTRLHLT); i++)
-		;
-	ud_delay_ms(200);
-	con_hex("USB", rd32(dwc + DWC3_DSTS));
-
-	/* USB 2.0 high-speed (the 8T port), like the sweet port */
-	wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~7u | 3);
-
-	/* event ring in our DMA area (after the reset) */
+	/* event ring in our DMA area */
 	wr32(dwc + DWC3_GEVNTADR_LO, (uint32_t)(uintptr_t)&ud.evt);
 	wr32(dwc + DWC3_GEVNTADR_HI, (uint32_t)((uintptr_t)&ud.evt >> 32));
-	wr32(dwc + DWC3_GEVNTSIZ, 4096);
-	wr32(dwc + DWC3_GEVNTCOUNT, 0);
+	wr32(dwc + DWC3_GEVNTSIZ, (1u << 31) | 4096);	/* interrupt masked: polled */
+	wr32(dwc + DWC3_GEVNTCOUNT, rd32(dwc + DWC3_GEVNTCOUNT) & 0xffff);
 	evt_pos = 0;
-	con_hex("USB", rd32(dwc + DWC3_DSTS));
 
-	/* configure the endpoints: phys 0/1 = ep0 (resource 0, control),
-	 * phys 2/3 = ep1 (resource 1, bulk) */
-	ud_epcmd(0, DEPCMD_DEPSTARTCFG, 0, 0, 0);	/* ep0 OUT */
-	ud_epcmd(1, DEPCMD_DEPSTARTCFG, 0, 0, 1);	/* ep0 IN */
-	ud_epcmd(2, DEPCMD_DEPSTARTCFG, 1, 2, 0);	/* ep1 OUT */
-	ud_epcmd(3, DEPCMD_DEPSTARTCFG, 1, 2, 1);	/* ep1 IN */
-	wr32(dwc + DWC3_DALEPENA, 0xf);
-	/* device events: disconnect, reset, connect-done, link-state change */
-	wr32(dwc + DWC3_DEVTEN, 0x1 | 0x2 | 0x4 | 0x10);
+	/* High speed, address 0 */
+	wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~(7u | (0x7fu << 3)));
+	/* Events: disconnect, USB reset, connect done */
+	wr32(dwc + DWC3_DEVTEN, 0x7);
+
+	/* Endpoint 0 OUT/IN: start config, control type, 512-byte packets
+	 * until the connect-done event (the host then re-programs to 64). */
+	if (ud_epcmd(0, DEPCMD_DEPSTARTCFG, 0, 0, 0) ||
+	    ud_epcmd(0, DEPCMD_SETEPCONFIG, (0u << 1) | (512u << 3), (1u << 8) | (1u << 10) | (0u << 25), 0) ||
+	    ud_epcmd(0, DEPCMD_SETTRANSFRESOURCE, 1, 0, 0) ||
+	    ud_epcmd(1, DEPCMD_SETEPCONFIG, (0u << 1) | (512u << 3), (1u << 8) | (1u << 10) | (1u << 25), 0) ||
+	    ud_epcmd(1, DEPCMD_SETTRANSFRESOURCE, 1, 0, 0)) {
+		con_str("USB", "ep0 setup failed");
+		return;
+	}
+	wr32(dwc + DWC3_DALEPENA, 0x3);
+	ud_start_setup();
+
 	wr32(dwc + DWC3_DCTL, rd32(dwc + DWC3_DCTL) | DCTL_RUN_STOP);
 	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_DSTS) & DSTS_DEVCTRLHLT); i++)
 		;
 	con_hex("USB", rd32(dwc + DWC3_DSTS));
-	con_hex2("USB", "dsts", rd32(dwc + DWC3_DSTS), "dctl", rd32(dwc + DWC3_DCTL));
-	ud_start_setup();
-	arm_ring();
 	con_str("USB", "server running (fastboot)");
 
 	for (;;) {
@@ -498,19 +485,30 @@ void usb_server(void)
 			evt_pos += 4;
 			wr32(dwc + DWC3_GEVNTCOUNT, evt_pos & 0xffff);
 
-			if (phys_ep == 0 && (status >> 16 & 0x3ff) >= 1 && (status >> 16 & 0x3ff) <= 7) {
-				/* device events (DisConn, USBRst, ConnectDone, ULStChng...):
-				 * the low event number = in bits 16.. */
-				unsigned ev = status >> 16 & 0x3ff;
-				con_hex2("USB", "evt", ev, "st", status);
-				if (ev == 1) con_str("USB", "DisConn");
-				else if (ev == 2) con_str("USB", "USBRst");
-				else if (ev == 3) con_str("USB", "ConnectDone");
-				else if (ev == 4) con_str("USB", "ULStChng");
-				else if (ev == 5) con_str("USB", "WkUp");
-				else if (ev == 6) con_str("USB", "Hiber");
-				else if (ev == 7) con_str("USB", "VndrDevTst");
-				else con_str("USB", "dev");
+			if (status & 1) {	/* device event */
+				uint32_t dtype = (status >> 8) & 0xf;
+				if (dtype == 1) {	/* USB reset */
+					con_str("USB", "bus reset");
+					wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~(0x7fu << 3));
+				} else if (dtype == 2) {	/* connect done */
+					con_str("USB", "connect done");
+					/* ep0 max packet 64 at high speed; arm the bulk ring */
+					ud_epcmd(0, DEPCMD_SETEPCONFIG, (0u << 1) | (64u << 3) | (2u << 30),
+					    (1u << 8) | (1u << 10) | (0u << 25), 0);
+					ud_epcmd(1, DEPCMD_SETEPCONFIG, (0u << 1) | (64u << 3) | (2u << 30),
+					    (1u << 8) | (1u << 10) | (1u << 25), 0);
+					/* ep1 bulk in/out */
+					ud_epcmd(2, DEPCMD_DEPSTARTCFG, 1, 2, 0);
+					ud_epcmd(2, DEPCMD_SETEPCONFIG, (2u << 1) | (512u << 3),
+					    (1u << 8) | (1u << 10) | (0u << 25), 0);
+					ud_epcmd(3, DEPCMD_DEPSTARTCFG, 1, 2, 1);
+					ud_epcmd(3, DEPCMD_SETEPCONFIG, (2u << 1) | (512u << 3),
+					    (1u << 8) | (1u << 10) | (1u << 25), 0);
+					wr32(dwc + DWC3_DALEPENA, 0xf);
+					arm_ring();
+				} else if (dtype == 0) {
+					con_str("USB", "disconnect");
+				}
 				continue;
 			}
 			if (evt_type == 0x4) {	/* XferNotReady: arm the setup / the bulk ring */
