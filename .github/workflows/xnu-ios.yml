@@ -106,16 +106,20 @@ jobs:
           cat > xcrun-ios <<'EOF'
           #!/bin/bash
           orig=("$@")
-          sdk=""; show=""
+          sdk=""; show=""; find=""
           while [ $# -gt 0 ]; do case "$1" in
             -sdk) sdk="$2"; shift 2;; -verbose) shift;;
+            -find|--find|-f) find="$2"; shift 2;;
             -show-sdk-path|--show-sdk-path) show=path; shift;;
             -show-sdk-version|--show-sdk-version) show=version; shift;;
             -show-sdk-platform-path|--show-sdk-platform-path) show=platform; shift;;
             -show-sdk-platform-version) show=platformversion; shift;;
             *) break;; esac; done
+          # MakeInc.cmd first resolves the shorthand (iphoneos) and then
+          # re-queries with the RESOLVED path (SDKVERSION, PLATFORMPATH):
+          # both spellings name this SDK.
           case "$sdk" in
-            iphoneos*)
+            iphoneos*|/*)
               case "$show" in
                 path) echo "$IOS_SDK"; exit 0;;
                 version) echo "16.5"; exit 0;;
@@ -123,6 +127,12 @@ jobs:
                 platformversion) echo "16.5"; exit 0;;
               esac;;
           esac
+          # -find locates host tools (mig, clang, ...): SDK-independent.
+          # The real xcrun would choke on the resolved SDK path.
+          if [ -n "$find" ]; then
+            unset SDKROOT
+            exec /usr/bin/xcrun -find "$find"
+          fi
           # make exports the resolved SDKROOT into the environment; the real
           # xcrun would pick that up instead of its own SDKs and fail.
           # Delegate the ORIGINAL query (the shifts above consume "$@").
