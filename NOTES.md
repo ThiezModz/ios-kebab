@@ -118,6 +118,18 @@ skywalk self-tests PASSED, bsd_autoconf/kminit, lo0/gif0/stf0 interfaces.
 Result: no_panic_observed. The 15-min run (qemu-run-ios3-long) is watching
 launchd → shared_region_check_np → SpringBoard.
 
+**Milestone (2026-10-30, ~00:35): LAUNCHD RUNS.** /sbin/launchd execs, dyld
+initializes, libignition executes ("hello from launchd.1", stage count 0x2)
+and prints its configuration — then the console freezes mid-line at
+"configuration :" for 10+ minutes (systrace run to see what it waits on).
+The shared-region gates ALL PASS now (no trust-cache, no SIP rejections —
+the iOS build + lp-sip0 do their jobs), but the region is EMPTY: dyld never
+attempts the cache map (no kernel map trace at all, only two
+check_np(start_address) failures), so dyld runs UNCACHED — launchd.1's next
+steps crawl under TCG. Open question: why dyld skips the cache (file
+missing on the root? boot-session UUID mismatch? — the systrace run with
+systrace=2 systrace_name=launchd watches the opens).
+
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
 
