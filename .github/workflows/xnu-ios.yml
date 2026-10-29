@@ -176,25 +176,16 @@ jobs:
           libtool -static -o "$IOS_SDK/usr/local/lib/kernel/libfirehose_kernel.a" /tmp/firehose_buffer.o
           ls -la "$IOS_SDK/usr/local/lib/kernel/"
 
-      - name: libcc_kext.a from the KDK (the kernel links -lcc_kext)
+      - name: libcc_kext.a from the macOS SDK (the kernel links -lcc_kext)
         run: |
-          # LD_KERNEL_LIBS = -lcc_kext (makedefs/MakeInc.def); the public SDK
-          # lacks the archive, the KDK ships it. Same download + install the
-          # dxb build uses (dortania/KdkSupportPkg manifest).
-          KDK_URL=$(curl -s "https://raw.githubusercontent.com/dortania/KdkSupportPkg/gh-pages/manifest.json" | \
-            jq -r '.[] | select(.name=="Kernel Debug Kit 13.5 build 22G74") | .url')
-          curl -sL --retry 3 -o /tmp/KDK.dmg "$KDK_URL"
-          ls -la /tmp/KDK.dmg
-          hdiutil attach /tmp/KDK.dmg -nobrowse -quiet
-          sudo installer -pkg "/Volumes/Kernel Debug Kit/KernelDebugKit.pkg" -target /
-          hdiutil detach "/Volumes/Kernel Debug Kit" -quiet || true
-          LIB=$(find /Library/Developer/KDKs -name libcc_kext.a | head -1)
-          if [ -z "$LIB" ]; then
-            echo "no libcc_kext.a in the installed KDK; tree:"; find /Library/Developer/KDKs -maxdepth 4 | head -30
-            echo "Xcode toolchain:"; ls /Applications/Xcode_15.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib 2>/dev/null | grep -i cc_kext || true
-            exit 1
-          fi
-          cp "$LIB" "$IOS_SDK/usr/local/lib/kernel/libcc_kext.a"
+          # LD_KERNEL_LIBS = -lcc_kext (makedefs/MakeInc.def); the theos iOS
+          # SDK has no kernel archives, but Xcode's macOS SDK ships
+          # usr/lib/libcc_kext.a (universal) — that is where the dxb macOS
+          # build resolves it from (the 13.5 KDK does not contain the file).
+          MACOS_SDK=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
+          test -f "$MACOS_SDK/usr/lib/libcc_kext.a" || { \
+            echo "no libcc_kext.a in the macOS SDK:"; ls "$MACOS_SDK/usr/lib" | grep -i kext || true; exit 1; }
+          cp "$MACOS_SDK/usr/lib/libcc_kext.a" "$IOS_SDK/usr/local/lib/kernel/libcc_kext.a"
           ls -la "$IOS_SDK/usr/local/lib/kernel/"
 
       - name: Build (iOS target, SWEET machine config)
