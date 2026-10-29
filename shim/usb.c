@@ -418,21 +418,22 @@ void usb_server(void)
 
 	con_str("USB", "server: adopting the ABL gadget");
 
-	/* event ring in our DMA area */
-	wr32(dwc + DWC3_GEVNTADR_LO, (uint32_t)(uintptr_t)&ud.evt);
-	wr32(dwc + DWC3_GEVNTADR_HI, (uint32_t)((uintptr_t)&ud.evt >> 32));
-	wr32(dwc + DWC3_GEVNTSIZ, 4096);
-	wr32(dwc + DWC3_GEVNTCOUNT, 0);
-	evt_pos = 0;
-
-	/* Full core reset: drops the PHY link so the host re-enumerates with
-	 * our descriptors (the device-only soft reset keeps the ABL's link and
-	 * identity alive). */
+	/* Full core reset FIRST: it wipes the event ring and the endpoint
+	 * state, so everything else is programmed after it. The reset also
+	 * drops the PHY link so the host re-enumerates with our descriptors
+	 * (the device-only soft reset keeps the ABL's link and identity). */
 	wr32(dwc + DWC3_GCTL, rd32(dwc + DWC3_GCTL) | GCTL_CORESOFTRESET);
 	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_GCTL) & GCTL_CORESOFTRESET); i++)
 		;
 	/* USB 2.0 high-speed (the 8T port), like the sweet port */
 	wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~7u | 3);
+
+	/* event ring in our DMA area (after the reset) */
+	wr32(dwc + DWC3_GEVNTADR_LO, (uint32_t)(uintptr_t)&ud.evt);
+	wr32(dwc + DWC3_GEVNTADR_HI, (uint32_t)((uintptr_t)&ud.evt >> 32));
+	wr32(dwc + DWC3_GEVNTSIZ, 4096);
+	wr32(dwc + DWC3_GEVNTCOUNT, 0);
+	evt_pos = 0;
 	con_hex("USB", rd32(dwc + DWC3_DSTS));
 
 	/* configure the endpoints: phys 0/1 = ep0 (resource 0, control),
@@ -469,16 +470,14 @@ void usb_server(void)
 				 * the low event number = in bits 16.. */
 				unsigned ev = status >> 16 & 0x3ff;
 				con_hex2("USB", "evt", ev, "st", status);
-				const char *nm;
-				if (ev == 1) nm = "DisConn";
-				else if (ev == 2) nm = "USBRst";
-				else if (ev == 3) nm = "ConnectDone";
-				else if (ev == 4) nm = "ULStChng";
-				else if (ev == 5) nm = "WkUp";
-				else if (ev == 6) nm = "Hiber";
-				else if (ev == 7) nm = "VndrDevTst";
-				else nm = "dev";
-				con_str("USB", nm);
+				if (ev == 1) con_str("USB", "DisConn");
+				else if (ev == 2) con_str("USB", "USBRst");
+				else if (ev == 3) con_str("USB", "ConnectDone");
+				else if (ev == 4) con_str("USB", "ULStChng");
+				else if (ev == 5) con_str("USB", "WkUp");
+				else if (ev == 6) con_str("USB", "Hiber");
+				else if (ev == 7) con_str("USB", "VndrDevTst");
+				else con_str("USB", "dev");
 				continue;
 			}
 			if (evt_type == 0x4) {	/* XferNotReady: arm the setup / the bulk ring */
