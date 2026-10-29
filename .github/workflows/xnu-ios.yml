@@ -176,17 +176,18 @@ jobs:
           libtool -static -o "$IOS_SDK/usr/local/lib/kernel/libfirehose_kernel.a" /tmp/firehose_buffer.o
           ls -la "$IOS_SDK/usr/local/lib/kernel/"
 
-      - name: libcc_kext.a from the macOS SDK (the kernel links -lcc_kext)
+      - name: libcc_kext probe (the kernel links -lcc_kext; dxb's link resolves it with no special -L)
         run: |
-          # LD_KERNEL_LIBS = -lcc_kext (makedefs/MakeInc.def); the theos iOS
-          # SDK has no kernel archives, but Xcode's macOS SDK ships
-          # usr/lib/libcc_kext.a (universal) — that is where the dxb macOS
-          # build resolves it from (the 13.5 KDK does not contain the file).
-          MACOS_SDK=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
-          test -f "$MACOS_SDK/usr/lib/libcc_kext.a" || { \
-            echo "no libcc_kext.a in the macOS SDK:"; ls "$MACOS_SDK/usr/lib" | grep -i kext || true; exit 1; }
-          cp "$MACOS_SDK/usr/lib/libcc_kext.a" "$IOS_SDK/usr/local/lib/kernel/libcc_kext.a"
-          ls -la "$IOS_SDK/usr/local/lib/kernel/"
+          # Non-fatal: the dxb build's kernel link carries -lcc_kext with no
+          # extra -L and succeeds, so the archive lives on the runner's
+          # default search path. Record where, in case the link ever fails.
+          echo "Xcode apps:"; ls -d /Applications/Xcode*.app 2>/dev/null || true
+          for d in /Applications/Xcode*.app; do
+            [ -d "$d" ] || continue
+            echo "-- $d:"; find "$d" -name "*cc_kext*" 2>/dev/null | head -3
+          done
+          echo "host libs:"; ls /usr/lib /usr/local/lib 2>/dev/null | grep -i cc_kext || true
+          echo "macOS SDK usr/lib:"; ls "$(/usr/bin/xcrun --sdk macosx --show-sdk-path)/usr/lib" 2>/dev/null | grep -i cc_kext || true
 
       - name: Build (iOS target, SWEET machine config)
         working-directory: xnu-src
