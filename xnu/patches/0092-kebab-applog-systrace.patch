@@ -1,0 +1,94 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 68612db..e187b66 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1157,6 +1157,19 @@ SYSCTL_PROC(_vm, OID_AUTO, shared_region_control,
+  *		activators should not be given the opportunity to attempt
+  *		to activate the image.
+  */
++/* Bring-up aid: with boot-arg systrace set, say which stage of an exec refused the image. */
++static uint32_t exec_trace;
++static uint32_t exec_trace_parsed;
++
++static void
++exec_trace_parse(void)
++{
++	if (!exec_trace_parsed) {
++		exec_trace_parsed = 1;
++		PE_parse_boot_argn("systrace", &exec_trace, sizeof(exec_trace));
++	}
++}
++
+ static int
+ exec_mach_imgact(struct image_params *imgp)
+ {
+@@ -1315,6 +1328,10 @@ grade:
+ 	 * Actually load the image file we previously decided to load.
+ 	 */
+ 	lret = load_machfile(imgp, mach_header, thread, &map, &load_result);
++	exec_trace_parse();
++	if (lret != LOAD_SUCCESS && exec_trace) {
++		printf("exectrace: %s: load_machfile failed: %d\n", imgp->ip_ndp->ni_cnd.cn_pnbuf, lret);
++	}
+ 	if (lret != LOAD_SUCCESS) {
+ 		error = load_return_to_errno(lret);
+ 
+@@ -2197,6 +2214,10 @@ again:
+ 	}
+ 
+ 	error = exec_check_permissions(imgp);
++	exec_trace_parse();
++	if (error && exec_trace) {
++		printf("exectrace: %s: exec_check_permissions failed: %d\n", imgp->ip_ndp->ni_cnd.cn_pnbuf, error);
++	}
+ 	if (error) {
+ 		goto bad;
+ 	}
+@@ -2640,6 +2661,38 @@ done:
+  *		the child following operations the child may in fact not be
+  *		normally permitted to perform.
+  */
++/*
++ * Bring-up aid, boot-arg applog=1: what applications and other programs started without a
++ * terminal say is worth reading here. Their standard output and error, which launchd opens on
++ * /dev/null, go to the console instead (that shows NSLog and the "Terminating app due to
++ * uncaught exception" kind of message). applog_name=NAME[,NAME...] with applog=1 does that
++ * for the programs whose file names begin with one of the NAMEs only, which is how to read
++ * what one application extension has to say.
++ */
++static uint32_t exec_applog;
++static char exec_applog_name[128];
++static uint32_t exec_applog_parsed;
++
++static void
++exec_applog_parse(void)
++{
++	if (!exec_applog_parsed) {
++		exec_applog_parsed = 1;
++		PE_parse_boot_argn("applog", &exec_applog, sizeof(exec_applog));
++		PE_parse_boot_argn("applog_name", exec_applog_name, sizeof(exec_applog_name));
++	}
++}
++
++static const char *
++exec_applog_path(int fd, const char *path)
++{
++	exec_applog_parse();
++	if (exec_applog && (fd == 1 || fd == 2) && strcmp(path, "/dev/null") == 0) {
++		return "/dev/console";
++	}
++	return path;
++}
++
+ static int
+ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
+ {
+@@ -2691,7 +2744,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
+ 			AUDIT_SUBCALL_ENTER(OPEN, p, uthread);
+ 
+ 			NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1, UIO_SYSSPACE,
+-			    CAST_USER_ADDR_T(psfa->psfaa_openargs.psfao_path),
++			    CAST_USER_ADDR_T(exec_applog_path(psfa->psfaa_filedes, psfa->psfaa_openargs.psfao_path)),
+ 			    imgp->ip_vfs_context);
+ 
+ 			error = open1(imgp->ip_vfs_context, ndp,
