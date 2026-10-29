@@ -106,7 +106,7 @@ jobs:
             -isysroot "\$IOS_SDK" "\$@"
           EOF
           chmod +x /usr/local/bin/xnu-clang /usr/local/bin/xnu-clang++
-          make SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
+          make SDKROOT="$IOS_SDK" ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
             KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 \
             BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 CC=xnu-clang CXX=xnu-clang++ \
             HOST_CC=clang HOST_CXX=clang++ LOGCOLORS=n all
