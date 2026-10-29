@@ -105,6 +105,7 @@ jobs:
           # xcrun (the hakios model: their host/bin/xcrun does the same).
           cat > xcrun-ios <<'EOF'
           #!/bin/bash
+          orig=("$@")
           sdk=""; show=""
           while [ $# -gt 0 ]; do case "$1" in
             -sdk) sdk="$2"; shift 2;; -verbose) shift;;
@@ -123,9 +124,11 @@ jobs:
               esac;;
           esac
           # make exports the resolved SDKROOT into the environment; the real
-          # xcrun would pick that up instead of its own SDKs and fail
+          # xcrun would pick that up instead of its own SDKs and fail.
+          # Delegate the ORIGINAL query (the shifts above consume "$@").
           unset SDKROOT
-          exec /usr/bin/xcrun "$@"
+          exec /usr/bin/xcrun "${orig[@]}"
+          EOF
           EOF
           chmod +x xcrun-ios
           mkdir -p ../sdk/Platforms/iPhoneOS.platform
