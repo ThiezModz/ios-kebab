@@ -1,0 +1,5 @@
+--- a/osfmk/arm/io_map.c
++++ b/osfmk/arm/io_map.c
+@@ -65,1 +65,1 @@
+-#define IO_MAP_SIZE            (8ul << 20)
++#define IO_MAP_SIZE            (64ul << 20)
