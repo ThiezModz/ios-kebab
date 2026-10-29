@@ -552,8 +552,14 @@ void usb_server(void)
 			uint32_t phys_ep = (ev >> 1) & 0x1f;
 			uint32_t evt_type = (ev >> 6) & 0xf;
 			uint32_t evt_status = (ev >> 12) & 0xf;
-			if (ud_events++ < 200)
-				con_hex2("USB", "raw", ev, "ep", phys_ep);
+			if (ud_events++ < 60) {
+				if (evt_type == 1)
+					con_hex2("USB", "XC ep", phys_ep, "len", trb_len);
+				else if (evt_type == 3)
+					con_hex2("USB", "NR ep", phys_ep, "st", evt_status);
+				else if (evt_type == 4)
+					con_hex2("USB", "XIP ep", phys_ep, "st", evt_status);
+			}
 
 			if (evt_type == 3 && evt_status == 2) {	/* XferNotReady, control status */
 				if (ep0_state == EP0_WAIT_STATUS2 || ep0_state == EP0_WAIT_STATUS3) {
