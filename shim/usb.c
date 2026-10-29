@@ -474,6 +474,17 @@ void usb_server(void)
 	wr32(dwc + DWC3_GEVNTCOUNT, rd32(dwc + DWC3_GEVNTCOUNT) & 0xffff);
 	evt_pos = 0;
 
+	/* Toggle the wrapper's session bits (the Linux dwc3-qcom vbus override):
+	 * the clear ends the session (the host sees the disconnect), the set
+	 * re-validates it and the host re-enumerates with OUR descriptors. */
+	uintptr_t qs = 0x0a6f8800UL;
+	wr32(qs + 0x30, rd32(qs + 0x30) & ~(1u << 24));	/* LANE0_PWR_PRESENT */
+	wr32(qs + 0x10, rd32(qs + 0x10) & ~((1u << 20) | (1u << 28))); /* VBUS + SESSVLD */
+	ud_delay_ms(50);
+	wr32(qs + 0x30, rd32(qs + 0x30) | (1u << 24));
+	wr32(qs + 0x10, rd32(qs + 0x10) | (1u << 20) | (1u << 28));
+	ud_delay_ms(50);
+
 	/* High speed, address 0 */
 	wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~(7u | (0x7fu << 3)));
 	/* Events: disconnect, USB reset, connect done */
