@@ -28,6 +28,7 @@
 #define wr32(a, v) do { *(volatile uint32_t *)(a) = (v); __asm__ volatile("dsb sy" ::: "memory"); } while (0)
 
 #define DCTL_RUN_STOP		(1u << 31)
+#define DCTL_CSFTRST		(1u << 30)
 #define DSTS_DEVCTRLHLT		(1u << 22)
 
 #define DEPCMD_SETEPCONFIG	1
@@ -188,10 +189,12 @@ static void ud_stall(void)
 	ud_start_setup();
 }
 
-/* Descriptors: VID 0x1209 / PID 0x0001 (pid.codes test ID), like sweet. */
+/* Descriptors: the classic Google fastboot identity (VID 0x18D1 /
+ * PID 0xD00D), so the host's fastboot client and udev rules take the
+ * device instead of the generic bulk driver. */
 static const uint8_t dev_desc[18] = {
 	18, 1, 0x00, 0x02, 0x00, 0x00, 0x00, 64,
-	0x09, 0x12, 0x01, 0x00, 0x00, 0x01, 1, 2, 3, 1,
+	0xd1, 0x18, 0x0d, 0xd0, 0x00, 0x01, 1, 2, 3, 1,
 };
 static const uint8_t cfg_desc[32] = {
 	9, 2, 32, 0, 1, 1, 0, 0x80, 250,	/* config: 1 interface */
@@ -421,13 +424,25 @@ void usb_server(void)
 	wr32(dwc + DWC3_GEVNTCOUNT, 0);
 	evt_pos = 0;
 
-	/* configure the endpoints: ep0 out/in + ep1 out/in (bulk) */
-	for (unsigned ep = 0; ep < 4; ep++) {
-		ud_epcmd(ep, DEPCMD_DEPSTARTCFG, ep == 0 || ep == 1 ? 1 : 2,
-		    ep == 0 || ep == 2 ? 0 : 1, 0);
-	}
+	/* soft reset the device controller, then start from the halted state */
+	wr32(dwc + DWC3_DCTL, DCTL_CSFTRST);
+	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_DCTL) & DCTL_CSFTRST); i++)
+		;
+	con_hex("USB", rd32(dwc + DWC3_DSTS));
+
+	/* configure the endpoints: phys 0/1 = ep0 (resource 0, control),
+	 * phys 2/3 = ep1 (resource 1, bulk) */
+	ud_epcmd(0, DEPCMD_DEPSTARTCFG, 0, 0, 0);	/* ep0 OUT */
+	ud_epcmd(1, DEPCMD_DEPSTARTCFG, 0, 0, 1);	/* ep0 IN */
+	ud_epcmd(2, DEPCMD_DEPSTARTCFG, 1, 2, 0);	/* ep1 OUT */
+	ud_epcmd(3, DEPCMD_DEPSTARTCFG, 1, 2, 1);	/* ep1 IN */
 	wr32(dwc + DWC3_DALEPENA, 0xf);
+	/* device events: disconnect, reset, connect-done, link-state change */
+	wr32(dwc + DWC3_DEVTEN, 0x1 | 0x2 | 0x4 | 0x10);
 	wr32(dwc + DWC3_DCTL, rd32(dwc + DWC3_DCTL) | DCTL_RUN_STOP);
+	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_DSTS) & DSTS_DEVCTRLHLT); i++)
+		;
+	con_hex("USB", rd32(dwc + DWC3_DSTS));
 	ud_start_setup();
 	arm_ring();
 	con_str("USB", "server running (fastboot)");
