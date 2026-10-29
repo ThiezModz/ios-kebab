@@ -420,11 +420,16 @@ void usb_server(void)
 
 	/* Full core reset FIRST: it wipes the event ring and the endpoint
 	 * state, so everything else is programmed after it. The reset also
-	 * drops the PHY link so the host re-enumerates with our descriptors
-	 * (the device-only soft reset keeps the ABL's link and identity). */
-	wr32(dwc + DWC3_GCTL, rd32(dwc + DWC3_GCTL) | GCTL_CORESOFTRESET);
+	 * drops the PHY link so the host re-enumerates with our descriptors.
+	 * The reset zeroes GCTL and GUSB2PHYCFG (the PHY interface config
+	 * ABL programmed), so those are saved and restored. */
+	uint32_t saved_gctl = rd32(dwc + DWC3_GCTL);
+	uint32_t saved_phycfg = rd32(dwc + DWC3_GUSB2PHYCFG);
+	wr32(dwc + DWC3_GCTL, saved_gctl | GCTL_CORESOFTRESET);
 	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_GCTL) & GCTL_CORESOFTRESET); i++)
 		;
+	wr32(dwc + DWC3_GCTL, saved_gctl & ~GCTL_CORESOFTRESET);
+	wr32(dwc + DWC3_GUSB2PHYCFG, saved_phycfg);
 	/* USB 2.0 high-speed (the 8T port), like the sweet port */
 	wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~7u | 3);
 
