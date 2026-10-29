@@ -29,6 +29,7 @@
 
 #define DCTL_RUN_STOP		(1u << 31)
 #define DCTL_CSFTRST		(1u << 30)
+#define GCTL_CORESOFTRESET	(1u << 1)
 #define DSTS_DEVCTRLHLT		(1u << 22)
 
 #define DEPCMD_SETEPCONFIG	1
@@ -424,10 +425,14 @@ void usb_server(void)
 	wr32(dwc + DWC3_GEVNTCOUNT, 0);
 	evt_pos = 0;
 
-	/* soft reset the device controller, then start from the halted state */
-	wr32(dwc + DWC3_DCTL, DCTL_CSFTRST);
-	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_DCTL) & DCTL_CSFTRST); i++)
+	/* Full core reset: drops the PHY link so the host re-enumerates with
+	 * our descriptors (the device-only soft reset keeps the ABL's link and
+	 * identity alive). */
+	wr32(dwc + DWC3_GCTL, rd32(dwc + DWC3_GCTL) | GCTL_CORESOFTRESET);
+	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_GCTL) & GCTL_CORESOFTRESET); i++)
 		;
+	/* USB 2.0 high-speed (the 8T port), like the sweet port */
+	wr32(dwc + DWC3_DCFG, rd32(dwc + DWC3_DCFG) & ~7u | 3);
 	con_hex("USB", rd32(dwc + DWC3_DSTS));
 
 	/* configure the endpoints: phys 0/1 = ep0 (resource 0, control),
