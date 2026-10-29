@@ -206,7 +206,7 @@ if __name__ == '__main__':
     ap.add_argument('--ramdisk', help='root image for md0 (boot with rd=md0)')
     ap.add_argument('--ramdisk-reserve', help='reserve N bytes for a streamed md0 (no data stored)')
     a = ap.parse_args()
-    blob, info = build(a.kernel, a.adt, a.cmdline, a.ramdisk)
+    blob, info = build(a.kernel, a.adt, a.cmdline, a.ramdisk, a.ramdisk_reserve)
 
     open(a.out, 'wb').write(blob)
     open(a.out, 'wb').write(blob)
