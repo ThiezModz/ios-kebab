@@ -1,6 +1,8 @@
 --- a/iokit/Kernel/arm/SweetPlatformExpert.cpp
 +++ b/iokit/Kernel/arm/SweetPlatformExpert.cpp
-@@ -61,11 +61,19 @@
+@@ -61,11 +61,20 @@
++extern "C" void kebab_init(void);
++
  bool
  SweetPlatformExpert::start(IOService *provider)
  {
@@ -16,7 +18,6 @@
 +	 * never attaches UFS, so start the kebab chain here instead. kebab_init
 +	 * is one-shot (guarded), so ufsroot0 boots keep the original path.
 +	 */
-+	extern "C" void kebab_init(void);
 +	kebab_init();
  	return true;
  }
