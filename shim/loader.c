@@ -76,6 +76,85 @@ static int magic_ok(const char *m)
 
 typedef void (*xnu_entry_t)(uint64_t boot_args_pa);
 
+/*
+ * Android sparse image support (AOSP system/core/libsparse). The boot.img
+ * v2 header stores the ramdisk size in a u32, so payloads above 4 GiB ship
+ * as a sparse blob (tools: img2simg) and ABL may hand either form to us.
+ * The unsparsed payload is LONGER than the blob, so the backward pass below
+ * is safe in place: at every step the write cursor stays ahead of the read
+ * cursor. Returns the unsparsed size, or 0 if this is not a sparse blob.
+ */
+#define SPARSE_MAGIC 0xED26FF3A
+#define SPARSE_RAW 0xCAC1
+#define SPARSE_FILL 0xCAC2
+#define SPARSE_DONT_CARE 0xCAC3
+#define SPARSE_CRC32 0xCAC4
+
+struct sparse_header {
+	uint32_t magic;
+	uint16_t major, minor;
+	uint16_t file_hdr_sz, chunk_hdr_sz;
+	uint32_t blk_sz, total_blks, total_chunks, checksum;
+} __attribute__((packed));
+
+struct sparse_chunk {
+	uint16_t type, reserved;
+	uint32_t chunk_sz, total_sz;
+} __attribute__((packed));
+
+static uint64_t unsparse(uint64_t base)
+{
+	const struct sparse_header *h = (const struct sparse_header *)base;
+
+	if (h->magic != SPARSE_MAGIC || h->major != 1 || h->file_hdr_sz < sizeof(*h) ||
+	    h->chunk_hdr_sz < sizeof(struct sparse_chunk) || h->blk_sz == 0 || h->total_blks == 0)
+		return 0;
+
+	const struct sparse_chunk *chunks = (const struct sparse_chunk *)(base + h->file_hdr_sz);
+	const uint8_t *in = (const uint8_t *)(chunks + h->total_chunks);
+	uint64_t in_bytes_total = 0;
+
+	for (uint32_t i = 0; i < h->total_chunks; i++)
+		in_bytes_total += chunks[i].total_sz;
+	in += in_bytes_total;	/* the cursor starts at the END of the input */
+
+	const uint64_t out_size = (uint64_t)h->total_blks * h->blk_sz;
+	uint64_t out_pos = out_size;
+	con_hex2("SPARSE", "blks=", h->total_blks, "chunks=", h->total_chunks);
+
+	/* Walk the chunks backward: chunk i covers [start, end) of the output. */
+	for (uint32_t i = h->total_chunks; i-- > 0;) {
+		const struct sparse_chunk *c = &chunks[i];
+		uint64_t seg_bytes = (uint64_t)c->chunk_sz * h->blk_sz;
+		uint64_t in_bytes = c->total_sz;
+		uint64_t start = out_pos - seg_bytes;
+		const uint8_t *src = in - in_bytes;
+
+		if (start > out_pos)		/* arithmetic or format corruption */
+			return 0;
+		if (c->type == SPARSE_RAW) {
+			copy64(base + start, (uintptr_t)src, in_bytes);
+		} else if (c->type == SPARSE_FILL) {
+			if (in_bytes != 4)
+				return 0;
+			volatile uint32_t *d = (volatile uint32_t *)(base + start);
+			for (uint64_t o = 0; o < seg_bytes; o += 4)
+				d[o / 4] = *(const uint32_t *)src;
+		} else if (c->type == SPARSE_DONT_CARE) {
+			zero64(base + start, seg_bytes);
+		} else if (c->type == SPARSE_CRC32) {
+			if (in_bytes < 4)
+				return 0;
+			copy64(base + start, (uintptr_t)src, in_bytes - 4);
+		} else {
+			return 0;
+		}
+		out_pos = start;
+		in = src;
+	}
+	return out_pos == 0 ? out_size : 0;
+}
+
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
@@ -86,8 +165,14 @@ const char *loader_boot(uintptr_t dtb)
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
 
 	const struct payload *p = (const struct payload *)rd_start;
-	if (!magic_ok(p->magic))
-		return "no SWEETXNU payload";
+	if (!magic_ok(p->magic)) {
+		/* The boot.img may carry the payload as an Android sparse image. */
+		if (unsparse(rd_start) == 0)
+			return "no SWEETXNU payload";
+		p = (const struct payload *)rd_start;
+		if (!magic_ok(p->magic))
+			return "no SWEETXNU payload after unsparse";
+	}
 	if (p->version != 1 || (p->adt_off & 7) || (rd_start & 7))
 		return "bad payload header";
 
