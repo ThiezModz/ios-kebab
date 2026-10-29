@@ -1,0 +1,25 @@
+diff --git a/bsd/dev/memdev.c b/bsd/dev/memdev.c
+index 3e6bffa..9aa592b 100644
+--- a/bsd/dev/memdev.c
++++ b/bsd/dev/memdev.c
+@@ -287,6 +287,8 @@ mdevstrategy(struct buf *bp)
+ 
+ 	if (blkoff >= (mdev[devid].mdSize << 12)) {                     /* Are they trying to read/write at/after end? */
+ 		if (blkoff != (mdev[devid].mdSize << 12)) {              /* Are we trying to read after EOF? */
++			printf("KEBAK EXEC: mdev past-end blkoff=0x%llx size=0x%llx\n",
++			    (unsigned long long)blkoff, (unsigned long long)(mdev[devid].mdSize << 12));
+ 			buf_seterror(bp, EINVAL);                                               /* Yeah, this is an error */
+ 		}
+ 		buf_biodone(bp);                                                                /* Return */
+diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+index 3a94ed4..0e01dfc 100644
+--- a/bsd/vfs/vfs_vnops.c
++++ b/bsd/vfs/vfs_vnops.c
+@@ -1004,6 +1004,7 @@ vn_rdwr_64(
+ 				error = vn_read_swapfile(vp, auio);
+ 			} else {
+ 				error = VNOP_READ(vp, auio, ioflg, &context);
++				printf("KEBAK EXEC: VNOP_READ -> %d\n", error);
+ 			}
+ 		} else {
+ 			error = VNOP_WRITE(vp, auio, ioflg, &context);
