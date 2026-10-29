@@ -48,14 +48,13 @@ jobs:
           SDK=$(ls -d sdk-theos/iPhoneOS16.5.sdk | head -1)
           echo "IOS_SDK=$PWD/$SDK" >> "$GITHUB_ENV"
 
-      - name: Fetch xnu
+      - name: Fetch xnu (the macos-13.5 release, like the dxb build)
         run: |
-          # the same apple-oss xnu the dxb build uses (8796.141.3)
-          git clone -q --depth 1 --branch xnu-8796.141.3 \
-            https://github.com/apple-oss-distributions/xnu.git xnu-src || \
-          git clone -q --depth 1 https://github.com/apple-oss-distributions/xnu.git xnu-src
+          REL=https://raw.githubusercontent.com/apple-oss-distributions/distribution-macOS/macos-135/release.json
+          TAG=$(curl -s "$REL" | jq -r '.projects[] | select(.project=="xnu") | .tag')
+          echo "xnu tag: $TAG"
+          git clone -q --depth 1 --branch "$TAG" https://github.com/apple-oss-distributions/xnu.git xnu-src
           cd xnu-src
-          # the kebab port expects the EXTERNAL_HEADERS the patch series references
           git log --oneline -1
 
       - name: Stage + patch
