@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/memdev.c b/bsd/dev/memdev.c
-index 3e6bffa..85798af 100644
+index e9f220e..85798af 100644
 --- a/bsd/dev/memdev.c
 +++ b/bsd/dev/memdev.c
 @@ -247,10 +247,10 @@ mdevrw(dev_t dev, struct uio *uio, __unused int ioflag)
@@ -15,19 +15,7 @@ index 3e6bffa..85798af 100644
  	}
  
  	status = uiomove64(mdata, count, uio);     /* Move the data */
-@@ -270,6 +270,11 @@ mdevstrategy(struct buf *bp)
- 
- 	devid = minor(buf_device(bp));                                                  /* Get minor device number */
- 
-+	printf("KEBAK EXEC: strategy devid=%d %s blkno=0x%llx count=0x%x secsize=0x%x mdSize=0x%x flags=0x%x\n",
-+	    devid, (buf_flags(bp) & B_READ) ? "R" : "W",
-+	    (unsigned long long)buf_blkno(bp), buf_count(bp),
-+	    mdev[devid].mdSecsize, mdev[devid].mdSize, mdev[devid].mdFlags);
-+
- 	if ((mdev[devid].mdFlags & mdInited) == 0) {            /* Have we actually been defined yet? */
- 		buf_seterror(bp, ENXIO);
- 		buf_biodone(bp);
-@@ -285,16 +290,18 @@ mdevstrategy(struct buf *bp)
+@@ -290,18 +290,18 @@ mdevstrategy(struct buf *bp)
   *	we just return with resid == count.
   */
  
@@ -35,7 +23,8 @@ index 3e6bffa..85798af 100644
 -		if (blkoff != (mdev[devid].mdSize << 12)) {              /* Are we trying to read after EOF? */
 +	if (blkoff >= ((uint64_t)mdev[devid].mdSize << 12)) {                     /* Are they trying to read/write at/after end? */
 +		if (blkoff != ((uint64_t)mdev[devid].mdSize << 12)) {              /* Are we trying to read after EOF? */
-+			printf("KEBAK EXEC: mdev past-end blkoff=0x%llx size=0x%llx\n",
+ 			printf("KEBAK EXEC: mdev past-end blkoff=0x%llx size=0x%llx\n",
+-			    (unsigned long long)blkoff, (unsigned long long)(mdev[devid].mdSize << 12));
 +			    (unsigned long long)blkoff, (unsigned long long)((uint64_t)mdev[devid].mdSize << 12));
  			buf_seterror(bp, EINVAL);                                               /* Yeah, this is an error */
  		}
@@ -50,7 +39,7 @@ index 3e6bffa..85798af 100644
  	}
  	/*
  	 * make sure the buffer's data area is
-@@ -439,7 +446,7 @@ mdevioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
+@@ -446,7 +446,7 @@ mdevioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
  		if (!(mdev[devid].mdFlags & mdInited)) {
  			return ENXIO;
  		}
@@ -59,12 +48,3 @@ index 3e6bffa..85798af 100644
  		break;
  
  	/*
-@@ -640,6 +647,8 @@ dev_t
- mdevadd(int devid, uint64_t base, unsigned int size, int phys)
- {
- 	int i;
-+	printf("KEBAK EXEC: mdevadd devid=%d base=0x%llx size=0x%x\n",
-+	    devid, (unsigned long long)base, size);
- 
- 	if (devid < 0) {
- 		devid = -1;
