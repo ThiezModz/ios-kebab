@@ -46,6 +46,10 @@ jobs:
         run: |
           git clone -q --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git sdk-theos-git
           git -C sdk-theos-git sparse-checkout set iPhoneOS16.5.sdk
+          # the partial clone must materialize the blobs; retry the checkout
+          # once if the tree came up empty (a silent failure mode)
+          test -f sdk-theos-git/iPhoneOS16.5.sdk/SDKSettings.plist || git -C sdk-theos-git checkout -q -f
+          test -f sdk-theos-git/iPhoneOS16.5.sdk/SDKSettings.plist || { echo "SDK checkout is empty"; exit 1; }
           echo "IOS_SDK=$PWD/sdk-theos-git/iPhoneOS16.5.sdk" >> "$GITHUB_ENV"
 
       - name: The xnu SDK overlay (availability.pl + the firehose headers)
@@ -94,19 +98,53 @@ jobs:
       - name: Build (iOS target, SWEET machine config)
         working-directory: xnu-src
         run: |
-          # xnu-clang: the Xcode clang targeting arm64-apple-ios16
+          # The makefiles ask XCRUN (makedefs/MakeInc.cmd) for the SDK path,
+          # version and platform. Apple's xcrun cannot resolve the theos 16.5
+          # SDK (it lives outside Xcode), so this wrapper answers the iphoneos
+          # queries from the env and delegates everything else to the real
+          # xcrun (the hakios model: their host/bin/xcrun does the same).
+          cat > xcrun-ios <<'EOF'
+          #!/bin/bash
+          sdk=""; show=""
+          while [ $# -gt 0 ]; do case "$1" in
+            -sdk) sdk="$2"; shift 2;; -verbose) shift;;
+            -show-sdk-path|--show-sdk-path) show=path; shift;;
+            -show-sdk-version|--show-sdk-version) show=version; shift;;
+            -show-sdk-platform-path|--show-sdk-platform-path) show=platform; shift;;
+            -show-sdk-platform-version) show=platformversion; shift;;
+            *) break;; esac; done
+          case "$sdk" in
+            iphoneos*)
+              case "$show" in
+                path) echo "$IOS_SDK"; exit 0;;
+                version) echo "16.5"; exit 0;;
+                platform) echo "$PWD/../sdk/Platforms/iPhoneOS.platform"; exit 0;;
+                platformversion) echo "16.5"; exit 0;;
+              esac;;
+          esac
+          # make exports the resolved SDKROOT into the environment; the real
+          # xcrun would pick that up instead of its own SDKs and fail
+          unset SDKROOT
+          exec /usr/bin/xcrun "$@"
+          EOF
+          chmod +x xcrun-ios
+          mkdir -p ../sdk/Platforms/iPhoneOS.platform
+
+          # xnu-clang: the Xcode clang targeting arm64-apple-ios16. Straight
+          # `clang`, not `xcrun`: make exports SDKROOT (the resolved path) into
+          # the recipe env and xcrun would try to resolve that with Apple's
+          # tooling and fail. DEVELOPER_DIR already selects the right toolchain.
           cat > /usr/local/bin/xnu-clang <<EOF
           #!/bin/bash
-          exec xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 \\
-            -isysroot "\$IOS_SDK" "\$@"
+          exec clang -target arm64-apple-ios16.0 -isysroot "\$IOS_SDK" "\$@"
           EOF
           cat > /usr/local/bin/xnu-clang++ <<EOF
           #!/bin/bash
-          exec xcrun --sdk iphoneos clang++ -target arm64-apple-ios16.0 \\
-            -isysroot "\$IOS_SDK" "\$@"
+          exec clang++ -target arm64-apple-ios16.0 -isysroot "\$IOS_SDK" "\$@"
           EOF
           chmod +x /usr/local/bin/xnu-clang /usr/local/bin/xnu-clang++
-          make SDKROOT="$IOS_SDK" ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
+          make SDKROOT=iphoneos XCRUN="$PWD/xcrun-ios" \
+            ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
             KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 \
             BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 CC=xnu-clang CXX=xnu-clang++ \
             HOST_CC=clang HOST_CXX=clang++ LOGCOLORS=n all
