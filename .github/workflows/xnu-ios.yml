@@ -21,6 +21,9 @@ concurrency:
   group: xnu-ios-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  MACHINE_CONFIG: SWEET
+
 jobs:
   build:
     runs-on: macos-14
@@ -89,7 +92,7 @@ jobs:
           make SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
             KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 \
             BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 CC=xnu-clang CXX=xnu-clang++ \
-            LOGCOLORS=n all
+            HOST_CC=clang HOST_CXX=clang++ LOGCOLORS=n all
           ls BUILD/obj/DEVELOPMENT_ARM64_SWEET/ | head
 
       - name: Collect
