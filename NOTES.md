@@ -1,5 +1,71 @@
 # iOS 16 on kebab (OnePlus 8T, SM8250) - working notes
 
+## >>> HANDOFF 2026-10-29 (late): the iOS-target kernel build (the hakios model) <<<
+
+**GOAL:** build the SWEET kernel with SDKROOT=iphoneos like hakios does. The
+dxb macOS-target build keeps the arm64 trust-cache gate in
+`bsd/vm/vm_unix.c` (guarded by `XNU_TARGET_OS_OSX && __arm64__`), which
+rejects the dyld shared cache ("not in trust cache") and stalls launchd in
+QEMU with `shared_region_check_np = ENOMEM`. The iphoneos SDK build
+compiles that gate out (`-DXNU_TARGET_OS_IOS`), exactly like hakios's kernel.
+
+**The shared-region gate chain in the iOS build (all verified in .141.3):**
+1. trust-cache gate — gone (iOS build).
+2. root-ownership check (uid 0) — the cache is root-owned (rsync --numeric-ids).
+3. `#if CONFIG_CSR` SIP check — SKIPPED: mkadt.py already writes
+   `/chosen/asmb/lp-sip0 = 0x6f` (includes CSR_ALLOW_UNRESTRICTED_FS),
+   which kern_csr.c reads via CONFIG_CSR_FROM_DT. This is the iOS-authentic
+   path — hakios instead has CONFIG_CSR compiled off + their vm_unix.c
+   cryptex-mount tweak, which our single-volume HFS+ root does not need
+   (stream-root.img hard-links the cryptexes into the one volume; the
+   tweak only matters for separate cryptex mounts like hakios's APFS).
+4. `scdir_enforce = 0` in the iOS branch — no scdir check.
+
+**The xnu-ios.yml CI (new, .github/workflows/xnu-ios.yml) — the pieces that took runs to get right:**
+- `SDKROOT=iphoneos` + a local `xcrun-ios` wrapper (hakios host/bin/xcrun
+  model): MakeInc.cmd resolves SDK path/version/platform through `$(XCRUN)`
+  (hardcoded /usr/bin/xcrun, overridable on the make line); Apple's xcrun
+  cannot resolve the theos 16.5 SDK, and it also picks up the make-exported
+  SDKROOT env (poison). The wrapper answers the iphoneos show-queries from
+  env, delegates the ORIGINAL argv (save it before the parse loop shifts
+  "$@" — passing "$@" after shifts was the "stdio.h not found" bug:
+  HOST_SDKROOT fell back to / and the SETUP host tools compiled with
+  -isysroot /).
+- `xnu-clang` = plain `clang -target arm64-apple-ios16.0 -isysroot $IOS_SDK`
+  (NOT `xcrun --sdk iphoneos clang`: the exported SDKROOT breaks it).
+- `libfirehose_kernel.a`: the kernel links `-lfirehose_kernel` from
+  $(SDKROOT)/usr/local/lib/kernel (LD_KERNEL_ARCHIVES); the public SDK
+  lacks it. Built like hakios xnu-deps stage 2: `make exporthdrs`, then one
+  kernel-flags compile of libdispatch's src/firehose/firehose_buffer.c
+  (commit a641558f, same as the headers) with -DARM64_BOARD_CONFIG_SWEET,
+  then libtool -static. (-lpthread_kext is a hakios-only addition; we do
+  not link it.)
+- The 16.5 SDK comes from theos/sdks via sparse checkout; the step
+  verifies SDKSettings.plist materialized (blob:none partial-clone gotcha).
+- The old 0095-ios-map-32bit-guard.patch was DELETED: vanilla
+  xnu-8796.141.3 already guards MAP_32BIT with XNU_TARGET_OS_OSX in
+  bsd/kern/kern_mman.c (it silently skipped as a no-op anyway).
+- Patch context verification: the CI-layout staging is reproducible
+  locally (see below); 0083 still fails to apply (superseded by 0084,
+  silently skipped in CI too).
+
+**Local CI-layout staging recipe (validated 2026-10-29):**
+```
+rm -rf /tmp/kebab-xnu && mkdir /tmp/kebab-xnu
+cp -a /home/thijsnieuw/oneplus8thackios/xnu-src /tmp/kebab-xnu/xnu-src     # vanilla .141.3, clean
+cp -a ios-sweet/drivers /tmp/kebab-xnu/drivers
+mkdir /tmp/kebab-xnu/xnu-src/patches
+cp xnu/patches/*.patch xnu/patches/*.sh /tmp/kebab-xnu/xnu-src/patches/
+cd /tmp/kebab-xnu/xnu-src && export MACHINE_CONFIG=SWEET MACOS_VERSION=13.5
+for s in patches/*.sh; do bash "$s"; done     # needs a fake xcrun for 0019's macosx SDK query
+for p in patches/*.patch; do git apply --check "$p" && git apply "$p" || echo SKIP $p; done
+```
+Generate new patch hunks against THIS tree (the memory's CI gotcha: context
+must reflect the tree after all earlier patches).
+
+**Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
+phone loader WIP from the earlier session — leave it).
+
 ## >>> HANDOFF 2026-10-28: repo retargeted from sweet to kebab <<<
 
 **STATE (2026-10-28 evening): the kernel BUILDS with the kebab drivers.** CI
