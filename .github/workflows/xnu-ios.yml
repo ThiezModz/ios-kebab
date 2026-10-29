@@ -158,6 +158,8 @@ jobs:
           # hakios builds it from the same libdispatch commit as the firehose
           # headers, against the kernel's exported headers (their xnu-deps stage 2).
           make SDKROOT=iphoneos XCRUN="$PWD/xcrun-ios" \
+            ARM64_LINK_ADDR=0xfffffe0007004000 ARM64_PLKSEG_ADDR=0xfffffe0004004000 \
+            LARGE_MEMORY_DEFINE=-DARM_LARGE_MEMORY=1 \
             ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
             KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 \
             BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 CC=xnu-clang CXX=xnu-clang++ \
@@ -193,6 +195,8 @@ jobs:
         working-directory: xnu-src
         run: |
           make SDKROOT=iphoneos XCRUN="$PWD/xcrun-ios" \
+            ARM64_LINK_ADDR=0xfffffe0007004000 ARM64_PLKSEG_ADDR=0xfffffe0004004000 \
+            LARGE_MEMORY_DEFINE=-DARM_LARGE_MEMORY=1 \
             ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
             KERNEL_CONFIGS=DEVELOPMENT ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 \
             BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 CC=xnu-clang CXX=xnu-clang++ \
