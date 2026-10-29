@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetPlatformExpert.cpp
 +++ b/iokit/Kernel/arm/SweetPlatformExpert.cpp
-@@ -61,6 +61,14 @@
+@@ -61,11 +61,19 @@
  bool
  SweetPlatformExpert::start(IOService *provider)
  {
