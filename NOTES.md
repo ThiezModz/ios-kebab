@@ -45,6 +45,22 @@ compiles that gate out (`-DXNU_TARGET_OS_IOS`), exactly like hakios's kernel.
 - The old 0095-ios-map-32bit-guard.patch was DELETED: vanilla
   xnu-8796.141.3 already guards MAP_32BIT with XNU_TARGET_OS_OSX in
   bsd/kern/kern_mman.c (it silently skipped as a no-op anyway).
+  (The user restored it in ef8113d after the MAP_32BIT CI error; that
+  error was the PLATFORM=MacOSX fallback from the wrapper bug, not a
+  missing guard — the restored patch still skips as a no-op.)
+- **0096 jetsam + 0097 ubsan-minimal (the iOS build's two kernel patches):**
+  the SWEET config (VM_BASE/modeled on MASTER.arm64.MacOSX) lacks two
+  options hakios's BCM2837 carries unconditionally, and the iOS-target
+  build needs both: `jetsam` in VM_BASE (vm_compressor.c's !OSX branch
+  reads memorystatus_swap_all_apps, declared only under CONFIG_JETSAM)
+  and `options CONFIG_UBSAN_MINIMAL` (MakeInc.def enables the ubsan
+  minimal runtime instrumentation for PLATFORM=iPhoneOS DEVELOPMENT;
+  san/memory/ubsan_minimal.c is optional config_ubsan_minimal). Both
+  hunks generated against the staged tree, git apply --check clean.
+- **libcc_kext** resolves from the Xcode toolchain's clang resource dir
+  (usr/lib/clang/15.0.0/lib/darwin/libclang_rt.cc_kext_*.a) — no KDK
+  needed (the probe step records the locations; the 13.5 KDK does not
+  contain the file at all, and neither does the macOS SDK usr/lib).
 - Patch context verification: the CI-layout staging is reproducible
   locally (see below); 0083 still fails to apply (superseded by 0084,
   silently skipped in CI too).
