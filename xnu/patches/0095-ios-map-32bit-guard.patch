@@ -1,0 +1,27 @@
+diff --git a/bsd/kern/kern_mman.c b/bsd/kern/kern_mman.c
+index 4c06aad..60b8077 100644
+--- a/bsd/kern/kern_mman.c
++++ b/bsd/kern/kern_mman.c
+@@ -265,7 +265,9 @@ mmap(proc_t p, struct mmap_args *uap, user_addr_t *retval)
+ 	    MAP_ANON |
+ 	    MAP_RESILIENT_CODESIGN |
+ 	    MAP_RESILIENT_MEDIA |
++#if XNU_TARGET_OS_OSX
+ 	    MAP_32BIT |
++#endif
+ 	    MAP_TRANSLATED_ALLOW_EXECUTE |
+ 	    MAP_UNIX03)) {
+ 		if (proc_2020_fall_os_sdk_or_later()) {
+@@ -719,10 +721,12 @@ mmap(proc_t p, struct mmap_args *uap, user_addr_t *retval)
+ 		vmk_flags.vmf_resilient_media = true;
+ 	}
+ 
++#if XNU_TARGET_OS_OSX
+ 	/* macOS-specific MAP_32BIT flag handling */
+ 	if (flags & MAP_32BIT) {
+ 		vmk_flags.vmkf_32bit_map_va = TRUE;
+ 	}
++#endif
+ #endif
+ 
+ 	/*
