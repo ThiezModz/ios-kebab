@@ -111,6 +111,13 @@ loader the iOS layout; kebab's loader is the fixed point.
   placement is pure downside; the macOS branch keeps the list RW.
   sweet_amfi's own conf/handle are plain static (RW) — fine.
 
+**Milestone (2026-10-30, ~00:20): the 0099 kernel boots PAST the mac policy
+fault — bsd_init completes in QEMU.** The 60s boot log shows the full
+bring-up: SWEET AMFI + Sandbox policies registered, HFS registered, mbinit,
+skywalk self-tests PASSED, bsd_autoconf/kminit, lo0/gif0/stf0 interfaces.
+Result: no_panic_observed. The 15-min run (qemu-run-ios3-long) is watching
+launchd → shared_region_check_np → SpringBoard.
+
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
 
