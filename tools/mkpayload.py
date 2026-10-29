@@ -140,7 +140,7 @@ def adt_dram(adt_blob):
             struct.unpack('<Q', chosen.prop('dram-size'))[0])
 
 
-def build(kernel_path, adt_path, cmdline, ramdisk_path=None):
+def build(kernel_path, adt_path, cmdline, ramdisk_path=None, ramdisk_reserve=None):
     buf = bytearray(open(kernel_path, 'rb').read())
     m = parse_macho(buf)
     nfix = apply_chained_fixups(buf, m)
@@ -158,9 +158,15 @@ def build(kernel_path, adt_path, cmdline, ramdisk_path=None):
     PHYS_BASE, MEM_SIZE = adt_dram(adt_blob)
     pieces = [(s['vmaddr'], s['vmsize'], buf[s['fileoff']:s['fileoff'] + s['filesize']]) for s in segs]
     ramdisk = None
-    if ramdisk_path:
-        image = open(ramdisk_path, 'rb').read()
-        rd_size = (len(image) + PAGE - 1) & ~(PAGE - 1)
+    if ramdisk_path or ramdisk_reserve is not None:
+        if ramdisk_reserve is not None:
+            # the region is declared (IOFindBSDRoot makes md0 of it) but the
+            # payload carries no data: the fastboot driver streams the root in
+            rd_size = int(ramdisk_reserve, 0)
+            image = b''
+        else:
+            image = open(ramdisk_path, 'rb').read()
+            rd_size = (len(image) + PAGE - 1) & ~(PAGE - 1)
         rd_va = kernel_end
         kernel_end = rd_va + rd_size
         rd_pa = rd_va - virt_base + PHYS_BASE
@@ -198,6 +204,7 @@ if __name__ == '__main__':
     ap.add_argument('kernel'); ap.add_argument('adt'); ap.add_argument('out')
     ap.add_argument('--cmdline', default='debug=0xc serial=3 cpus=1 keepsyms=1')
     ap.add_argument('--ramdisk', help='root image for md0 (boot with rd=md0)')
+    ap.add_argument('--ramdisk-reserve', help='reserve N bytes for a streamed md0 (no data stored)')
     ap.add_argument('--ramdisk-reserve', help='reserve N bytes for a streamed md0 (no data stored)')
     a = ap.parse_args()
     blob, info = build(a.kernel, a.adt, a.cmdline, a.ramdisk)
