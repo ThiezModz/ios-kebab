@@ -155,6 +155,8 @@ static uint64_t unsparse(uint64_t base)
 	return out_pos == 0 ? out_size : 0;
 }
 
+const char *loader_boot_at(uintptr_t dtb, const struct payload *p, uint64_t rd_start);
+
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
@@ -173,6 +175,17 @@ const char *loader_boot(uintptr_t dtb)
 		if (!magic_ok(p->magic))
 			return "no SWEETXNU payload after unsparse";
 	}
+	return loader_boot_at(dtb, p, rd_start);
+}
+
+/*
+ * The payload placement itself: validate, copy the segments to
+ * phys_base + (vmaddr - virt_base), place the ADT and boot_args behind the
+ * kernel, jump with the MMU and caches off and x0 = boot_args (physical).
+ * rd_start is where the payload file lives (ABL ramdisk or the USB slot).
+ */
+const char *loader_boot_at(uintptr_t dtb, const struct payload *p, uint64_t rd_start)
+{
 	if (p->version != 1 || (p->adt_off & 7) || (rd_start & 7))
 		return "bad payload header";
 
@@ -181,7 +194,9 @@ const char *loader_boot(uintptr_t dtb)
 	con_hex("VIRT", p->virt_base);
 	con_hex("ENTRY", p->entry_va);
 
-	/* The payload must not overlap where the kernel goes. */
+	/* The payload file spans rd_start .. rd_start+adt_off+adt_size (the ADT
+	 * is the last thing in it). It must not overlap where the kernel goes. */
+	uint64_t rd_end = rd_start + p->adt_off + p->adt_size;
 	if (rd_end > p->phys_base && rd_start < p->phys_base + p->mem_size)
 		return "ramdisk overlaps kernel memory";
 

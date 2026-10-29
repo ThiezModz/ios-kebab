@@ -11,6 +11,7 @@
 #include "mmu.h"
 #include "loader.h"
 #include "ufs.h"
+#include "usb.h"
 
 #define IMEM_RESTART_REASON	0x146aa65cUL	/* qcom,msm-imem restart_reason@65c */
 #define RESTART_BOOTLOADER	0x77665500U
@@ -383,9 +384,14 @@ void shim_main(uint64_t dtb)
 	con_str("LOADER", why);
 	con_skip();
 
-	/* No payload: probe the internal UFS while the MMU is still off. */
-	stage = "ufs";
-	test_ufs();
+	/* No payload: the shim is the resident loader. Probe the USB state ABL
+	 * left, then serve fastboot on it (the hakios xl model: the big payload
+	 * comes over the loader's own fastboot interface, past ABL's 768 MB cap).
+	 * usb_server() never returns. */
+	stage = "usb";
+	usb_probe();
+	con_skip();
+	usb_server();
 	con_skip();
 	/* Keep the probe results on screen (later tests clear it); reset after 3 min. */
 	con_str("UFS", "probe done, reset in ~3 min");

@@ -1,0 +1,486 @@
+/*
+ * USB fastboot server for the kebab shim — the hakios xl model.
+ *
+ * ABL boots the shim through `fastboot boot` of a small image; the phone's
+ * USB is already enumerated with the host. The shim adopts the running DWC3
+ * (device mode, PHY up, controller halted — the state the probe saw),
+ * restarts the core with its own event ring and endpoints, re-enumerates
+ * as a fastboot device, and takes the big XNU payload over its own
+ * fastboot interface — past ABL's 768 MB download cap:
+ *
+ *   fastboot oem ramdisk          select the payload slot for the download
+ *   fastboot download:4.6GB       (host streams the whole file; no cap here)
+ *   fastboot oem run              validate + jump into the payload
+ *   fastboot getvar product       -> "kebab-shim" (the resident loader)
+ *
+ * The DWC3 register model, the DEP 0x10 stride and the EP0 control state
+ * machine follow the sweet port's proven driver (xnu patches 0072-0077,
+ * bsd/dev/sweet_usb.c); the fastboot command set follows LK's fastboot.
+ * The shim runs with the MMU off: every address is physical, memory is
+ * Device (not cache coherent), and the DWC3 DMA reads RAM directly.
+ */
+#include <stdint.h>
+#include <string.h>
+#include "console.h"
+#include "usb.h"
+
+#define rd32(a) ({ uint32_t _v = *(volatile uint32_t *)(a); __asm__ volatile("dsb sy" ::: "memory"); _v; })
+#define wr32(a, v) do { *(volatile uint32_t *)(a) = (v); __asm__ volatile("dsb sy" ::: "memory"); } while (0)
+
+#define DCTL_RUN_STOP		(1u << 31)
+#define DSTS_DEVCTRLHLT		(1u << 22)
+
+#define DEPCMD_SETEPCONFIG	1
+#define DEPCMD_SETTRANSFRESOURCE 2
+#define DEPCMD_SETSTALL		4
+#define DEPCMD_STARTTRANSFER	6
+#define DEPCMD_DEPSTARTCFG	9
+#define DEPCMD_CMDACT		(1u << 10)
+
+#define TRB_HWO		(1u << 0)
+#define TRB_LST		(1u << 1)
+#define TRB_ISP_IMI	(1u << 10)
+#define TRB_IOC		(1u << 11)
+#define TRBCTL_SETUP	(2u << 4)
+#define TRBCTL_STATUS2	(3u << 4)
+#define TRBCTL_STATUS3	(4u << 4)
+#define TRBCTL_DATA	(5u << 4)
+#define TRBCTL_NORMAL	(1u << 4)
+
+/* The shim links without libc; __builtin_strcmp still emits a call for
+ * non-constant strings, so the one string helper lives here. */
+static unsigned kstrlen(const char *s)
+{
+	unsigned n = 0;
+	while (*s++)
+		n++;
+	return n;
+}
+
+static void kbcopy(void *d, const void *s, unsigned n)
+{
+	volatile unsigned char *dd = d;
+	const unsigned char *ss = s;
+	while (n--)
+		*dd++ = *ss++;
+}
+
+static int kstrcmp(const char *a, const char *b)
+{
+	while (*a && *a == *b) {
+		a++;
+		b++;
+	}
+	return (unsigned char)*a - (unsigned char)*b;
+}
+
+static int kmemcmp(const char *a, const char *b, unsigned n)
+{
+	while (n-- && *a == *b) {
+		a++;
+		b++;
+	}
+	return n == (unsigned)-1 ? 0 : (unsigned char)*a - (unsigned char)*b;
+}
+
+/* DMA area layout (4 KiB-aligned static buffer; the MMU is off, so its
+ * address IS the DMA address). */
+static __attribute__((aligned(4096))) struct {
+	uint32_t evt[1024];		/* event ring, 4 KiB */
+	uint32_t trb0[4];		/* ep0 OUT TRB */
+	uint32_t trb1[4];		/* ep0 IN TRB */
+	uint32_t trb2[4 * 16];		/* ep1 OUT TRB ring, 16 x 64 KiB */
+	uint32_t trb3[4];		/* ep1 IN TRB */
+	uint32_t setup[2];		/* 8-byte setup packet */
+	uint32_t data[512 / 4];		/* ep0 data stage */
+} ud __attribute__((aligned(4096)));
+
+#define RING_TRBS	16
+#define RING_TRB_BYTES	(64u << 10)	/* one bulk OUT TRB: 64 KiB */
+
+
+#define UD_EVT_OFF	0
+#define UD_TRB0_OFF	0x1000
+#define UD_TRB1_OFF	0x1010
+#define UD_TRB2_OFF	0x1020
+#define UD_TRB3_OFF	0x1030
+#define UD_SETUP_OFF	0x1040
+#define UD_DATA_OFF	0x1080
+#define UD_END		0x1280
+
+/* The fastboot bulk buffers: one TRB-sized window each way; the download
+ * streams into the payload slot at 0x50000000 (below the kernel window). */
+#define PAYLOAD_SLOT	0x50000000UL
+#define SLOT_END	0x164000000UL	/* slot + 4.6 GB, below the kernel window */
+static uint64_t cursor = PAYLOAD_SLOT;	/* where the next bulk OUT data lands */
+static uint64_t dl_total, dl_got;
+static int dl_active;
+static char fb_cmd[256];
+
+static uint32_t evt_pos;
+
+static void ud_start_trb(unsigned phys_ep, uint32_t trb_off, uint32_t buf_off,
+    uint32_t len, uint32_t ctl)
+{
+	volatile uint32_t *t = (volatile uint32_t *)((uintptr_t)&ud + trb_off);
+	uint64_t bpa = (uintptr_t)&ud + buf_off;
+
+	t[0] = (uint32_t)bpa;
+	t[1] = (uint32_t)(bpa >> 32);
+	t[2] = len;
+	t[3] = ctl | TRB_HWO | TRB_LST | TRB_ISP_IMI | TRB_IOC;
+	wr32(DWC3_DEPCMDPAR0(phys_ep), 0);
+	wr32(DWC3_DEPCMDPAR1(phys_ep), 0);
+	wr32(DWC3_DEPCMDPAR2(phys_ep), 0);
+	(void)trb_off;
+	uint64_t tpa = (uintptr_t)&ud + trb_off;
+	wr32(DWC3_DEPCMDPAR0(phys_ep), (uint32_t)(tpa >> 32));
+	wr32(DWC3_DEPCMDPAR1(phys_ep), (uint32_t)tpa);
+	wr32(DWC3_DEPCMD(phys_ep), DEPCMD_STARTTRANSFER | DEPCMD_CMDACT);
+}
+
+static void ud_epcmd(unsigned phys_ep, uint32_t cmd, uint32_t p0, uint32_t p1, uint32_t p2)
+{
+	wr32(DWC3_DEPCMDPAR0(phys_ep), p0);
+	wr32(DWC3_DEPCMDPAR1(phys_ep), p1);
+	wr32(DWC3_DEPCMDPAR2(phys_ep), p2);
+	wr32(DWC3_DEPCMD(phys_ep), cmd | DEPCMD_CMDACT);
+	for (int i = 0; i < 100000; i++) {
+		if (!(rd32(DWC3_DEPCMD(phys_ep)) & DEPCMD_CMDACT))
+			return;
+	}
+	con_hex2("USB", "epcmd timeout ep", phys_ep, "cmd", cmd & 0xf);
+}
+
+/* Arm TRB k of the bulk OUT ring at the cursor (advancing it); k's bytes
+ * land at the cursor position when the host sends them. */
+static void arm_one(unsigned k)
+{
+	volatile uint32_t *t = (volatile uint32_t *)&ud.trb2[k * 4];
+	uint64_t bpa = cursor;
+
+	if (cursor + RING_TRB_BYTES > SLOT_END)
+		return;			/* the slot is full: leave the TRB disarmed */
+	t[0] = (uint32_t)bpa;
+	t[1] = (uint32_t)(bpa >> 32);
+	t[2] = RING_TRB_BYTES;
+	t[3] = TRBCTL_NORMAL | TRB_HWO | TRB_LST | TRB_ISP_IMI | TRB_IOC;
+	uint64_t tpa = (uintptr_t)t;
+	wr32(DWC3_DEPCMDPAR0(2), (uint32_t)(tpa >> 32));
+	wr32(DWC3_DEPCMDPAR1(2), (uint32_t)tpa);
+	wr32(DWC3_DEPCMD(2), DEPCMD_STARTTRANSFER | DEPCMD_CMDACT);
+}
+
+static void arm_ring(void)
+{
+	for (unsigned k = 0; k < RING_TRBS; k++)
+		arm_one(k);
+}
+
+static void ud_start_setup(void)
+{
+	ud_start_trb(0, UD_TRB0_OFF, UD_SETUP_OFF, 8, TRBCTL_SETUP);
+}
+
+static void ud_stall(void)
+{
+	ud_epcmd(0, DEPCMD_SETSTALL, 0, 0, 0);
+	ud_start_setup();
+}
+
+/* Descriptors: VID 0x1209 / PID 0x0001 (pid.codes test ID), like sweet. */
+static const uint8_t dev_desc[18] = {
+	18, 1, 0x00, 0x02, 0x00, 0x00, 0x00, 64,
+	0x09, 0x12, 0x01, 0x00, 0x00, 0x01, 1, 2, 3, 1,
+};
+static const uint8_t cfg_desc[32] = {
+	9, 2, 32, 0, 1, 1, 0, 0x80, 250,	/* config: 1 interface */
+	9, 4, 0, 0, 1, 0xff, 0x42, 0x03, 0,	/* interface 0, vendor, subclass 0x42, protocol 0x03 (fastboot) */
+	7, 5, 0x81, 2, 0x00, 0x02, 0,		/* EP1 IN, bulk, 512 */
+	7, 5, 0x01, 2, 0x00, 0x02, 0,		/* EP1 OUT, bulk, 512 */
+};
+/* No absolute pointers in data (the shim runs unrelocated), so the string
+ * descriptors come from a switch. */
+static uint32_t ud_string(unsigned idx, uint8_t *out)
+{
+	const char *str;
+
+	if (idx == 0) {
+		out[0] = 4; out[1] = 3; out[2] = 0x09; out[3] = 0x04;
+		return 4;
+	}
+	/* if-chains (not a switch: gcc turns contiguous switches into a
+	 * const pointer table, which is an ABS64 relocation) */
+	if (idx == 1)
+		str = "kebab-shim";
+	else if (idx == 2)
+		str = "ios-kebab fastboot loader";
+	else if (idx == 3)
+		str = "0001";
+	else
+		return 0;
+	uint32_t n = 2;
+	for (; *str && n < 126; str++) {
+		out[n++] = (uint8_t)*str;
+		out[n++] = 0;
+	}
+	out[0] = (uint8_t)n;
+	out[1] = 3;
+	return n;
+}
+
+/* ---- fastboot command set ---- */
+
+static void fb_send(const void *buf, uint32_t len)
+{
+	volatile uint8_t *dst = (volatile uint8_t *)((uintptr_t)&ud + UD_DATA_OFF);
+	/* bulk responses go through the ep1 IN TRB; buffer in the DMA area */
+	kbcopy((void *)dst, buf, len);
+	ud_start_trb(3, UD_TRB3_OFF, UD_DATA_OFF, len, TRBCTL_NORMAL);
+}
+
+static void fb_reply(const char *s)
+{
+	char b[280];
+	uint32_t n = (uint32_t)kstrlen(s);
+	kbcopy(b, s, n);
+	fb_send(b, n);
+}
+
+static void fb_getvar(const char *name)
+{
+	if (!kstrcmp(name, "product"))
+		fb_reply("OKAYkebab-shim");
+	else if (!kstrcmp(name, "version"))
+		fb_reply("OKAY0.1");
+	else if (!kstrcmp(name, "max-download-size"))
+		fb_reply("OKAY0x50000000");
+	else if (!kstrcmp(name, "result"))
+		fb_reply("OKAYrunning");
+	else
+		fb_reply("FAILunknown variable");
+}
+
+static void fb_download(const char *arg)
+{
+	dl_total = 0;
+	for (const char *p = arg; *p; p++)
+		dl_total = dl_total * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10);
+	dl_got = 0;
+	dl_active = 1;
+	cursor = PAYLOAD_SLOT;
+	{
+		char b[16];
+		uint32_t sz = (uint32_t)dl_total;
+		for (int i = 0; i < 8; i++)
+			b[7 - i] = "0123456789abcdef"[sz >> (i * 4) & 0xf];
+		b[8] = 0;
+		fb_send("DATA", 4);
+		fb_send(b, 8);
+	}
+	con_hex("USB", dl_total);
+}
+
+static void fb_flash(const char *arg)
+{
+	if (!kstrcmp(arg, "ramdisk") || !kstrcmp(arg, "payload")) {
+		if (dl_active && dl_got == dl_total) {
+			dl_active = 0;
+			fb_reply("OKAY");
+		} else {
+			fb_reply("FAILno complete download");
+		}
+	} else {
+		fb_reply("FAILunknown partition");
+	}
+}
+
+/* Validate and jump into the downloaded payload (the loader_boot logic). */
+extern const char *loader_boot_at(uintptr_t dtb, const struct payload *p, uint64_t slot);
+
+static void fb_run(void)
+{
+	if (!dl_got || dl_got != dl_total || dl_total < 0x1000) {
+		fb_reply("FAILno payload downloaded");
+		return;
+	}
+	fb_reply("OKAYbooting");
+	con_str("USB", "jumping into payload");
+	__asm__ volatile("dsb sy" ::: "memory");
+	loader_boot_at(0, (const struct payload *)PAYLOAD_SLOT, PAYLOAD_SLOT);
+	/* loader_boot_at does not return; if it does, say so */
+	fb_reply("FAILxnu returned");
+}
+
+static void fb_command(uint32_t len)
+{
+	fb_cmd[len] = 0;
+	con_str("FB", fb_cmd);
+	if (!kmemcmp(fb_cmd, "getvar:", 7))
+		fb_getvar(fb_cmd + 7);
+	else if (!kmemcmp(fb_cmd, "download:", 9))
+		fb_download(fb_cmd + 9);
+	else if (!kmemcmp(fb_cmd, "flash:", 6))
+		fb_flash(fb_cmd + 6);
+	else if (!kmemcmp(fb_cmd, "oem ", 4)) {
+		if (!kstrcmp(fb_cmd + 4, "ramdisk"))
+			fb_reply("OKAY");
+		else if (!kstrcmp(fb_cmd + 4, "run"))
+			fb_run();
+		else
+			fb_reply("FAILunknown oem command");
+	} else if (!kmemcmp(fb_cmd, "continue", 8) || !kmemcmp(fb_cmd, "boot", 4)) {
+		fb_run();
+	} else if (!kmemcmp(fb_cmd, "reboot", 6)) {
+		fb_reply("OKAY");
+	} else {
+		fb_reply("FAILunknown command");
+	}
+}
+
+/* ---- ep0 control transfers ---- */
+
+static void ep0_setup(void)
+{
+	const uint8_t *st = (const uint8_t *)((uintptr_t)&ud + UD_SETUP_OFF);
+	uint8_t *data = (uint8_t *)((uintptr_t)&ud + UD_DATA_OFF);
+	uint8_t type = st[0], req = st[1];
+	uint16_t value = (uint16_t)(st[2] | st[3] << 8);
+	uint16_t length = (uint16_t)(st[6] | st[7] << 8);
+	uint32_t n = 0;
+	int data_in = (type & 0x80) != 0;
+	int ok = 1;
+
+	if ((type & 0x60) != 0) {
+		ok = 0;
+	} else if (req == 6) {		/* GET_DESCRIPTOR */
+		switch (value >> 8) {
+		case 1: kbcopy(data, dev_desc, sizeof(dev_desc)); n = sizeof(dev_desc); break;
+		case 2: kbcopy(data, cfg_desc, sizeof(cfg_desc)); n = sizeof(cfg_desc); break;
+		case 3: n = ud_string(value & 0xff, data); ok = n != 0; break;
+		default: ok = 0; break;
+		}
+	} else if (req == 5) {		/* SET_ADDRESS */
+		uint32_t dcfg = rd32(DWC3_DCFG) & ~(0x7fu << 3);
+		wr32(DWC3_DCFG, dcfg | ((uint32_t)(value & 0x7f) << 3));
+	} else if (req == 9) {		/* SET_CONFIGURATION */
+		;			/* the endpoints were configured by DEPSTARTCFG */
+	} else if (req == 8) {		/* GET_CONFIGURATION */
+		data[0] = 1; n = 1;
+	} else if (req == 0) {		/* GET_STATUS */
+		data[0] = 0; data[1] = 0; n = 2;
+	} else {
+		ok = 0;
+	}
+
+	if (!ok) {
+		ud_stall();
+		return;
+	}
+	/* data stage (if any), then the status stage on the other endpoint */
+	uint32_t status = data_in ? TRBCTL_STATUS2 : TRBCTL_STATUS3;
+	if (length && n)
+		n = length < n ? length : n;
+	if (n) {
+		ud_start_trb(data_in ? 1 : 0, data_in ? UD_TRB1_OFF : UD_TRB0_OFF,
+		    UD_DATA_OFF, n, TRBCTL_DATA);
+	}
+	ud_start_trb(data_in ? 0 : 1, data_in ? UD_TRB0_OFF : UD_TRB1_OFF,
+	    UD_DATA_OFF, 0, status);
+}
+
+
+/* Read-only state report before the server takes over (the ABL handoff). */
+void usb_probe(void)
+{
+	uintptr_t dwc = DWC3_BASE;
+
+	con_str("USB", "adoption probe (ABL state)");
+	con_hex("USB", rd32(dwc + DWC3_GSNPSID));
+	con_hex("USB", rd32(dwc + DWC3_GCTL));
+	con_hex("USB", rd32(dwc + DWC3_GSTS));
+	con_hex("USB", rd32(dwc + DWC3_DCFG));
+	con_hex("USB", rd32(dwc + DWC3_DCTL));
+	con_hex("USB", rd32(dwc + DWC3_DSTS));
+	con_hex("USB", rd32(dwc + DWC3_DALEPENA));
+	con_str("USB", "probe done (read-only)");
+}
+
+/* ---- main server loop ---- */
+
+void usb_server(void)
+{
+	uintptr_t dwc = DWC3_BASE;
+
+	con_str("USB", "server: adopting the ABL gadget");
+
+	/* event ring in our DMA area */
+	wr32(dwc + DWC3_GEVNTADR_LO, (uint32_t)(uintptr_t)&ud.evt);
+	wr32(dwc + DWC3_GEVNTADR_HI, (uint32_t)((uintptr_t)&ud.evt >> 32));
+	wr32(dwc + DWC3_GEVNTSIZ, 4096);
+	wr32(dwc + DWC3_GEVNTCOUNT, 0);
+	evt_pos = 0;
+
+	/* configure the endpoints: ep0 out/in + ep1 out/in (bulk) */
+	for (unsigned ep = 0; ep < 4; ep++) {
+		ud_epcmd(ep, DEPCMD_DEPSTARTCFG, ep == 0 || ep == 1 ? 1 : 2,
+		    ep == 0 || ep == 2 ? 0 : 1, 0);
+	}
+	wr32(dwc + DWC3_DALEPENA, 0xf);
+	wr32(dwc + DWC3_DCTL, rd32(dwc + DWC3_DCTL) | DCTL_RUN_STOP);
+	ud_start_setup();
+	arm_ring();
+	con_str("USB", "server running (fastboot)");
+
+	for (;;) {
+		uint32_t cnt = rd32(dwc + DWC3_GEVNTCOUNT);
+		while (evt_pos != cnt) {
+			volatile uint32_t *e = (volatile uint32_t *)&ud.evt[evt_pos & 0x3fc];
+			uint32_t status = e[2];
+			uint32_t phys_ep = status & 0x1f;
+			uint32_t evt_type = (status >> 6) & 0xf;
+			uint32_t trb_len = e[3] >> 16;
+			evt_pos += 4;
+			wr32(dwc + DWC3_GEVNTCOUNT, evt_pos & 0xffff);
+
+			if (evt_type == 0x4) {	/* XferNotReady: arm the setup / the bulk ring */
+				if (phys_ep == 0)
+					ud_start_setup();
+				else if (phys_ep == 2)
+					arm_ring();
+				continue;
+			}
+			if (evt_type != 0x0)	/* not XferComplete */
+				continue;
+			if (phys_ep == 0) {	/* ep0 OUT done: a setup packet */
+				ep0_setup();
+			} else if (phys_ep == 1) {	/* ep0 IN done: next setup */
+				ud_start_setup();
+			} else if (phys_ep == 2) {	/* ep1 OUT chunk */
+				uint32_t k = (e[1] - (uint32_t)(uintptr_t)&ud.trb2) / 16;	/* TRB index */
+				uintptr_t buf = (uintptr_t)&ud.trb2[k];
+				(void)buf;
+				if (trb_len) {
+					if (dl_active) {
+						dl_got += trb_len;
+						cursor += trb_len;
+						if (dl_got >= dl_total) {
+							dl_active = 0;
+							fb_reply("OKAY");
+						}
+					} else {
+						/* a command transfer: the bytes are at the TRB's buffer */
+						const uint8_t *src = (const uint8_t *)((uintptr_t)&ud.trb2[k]);
+						uint32_t n = trb_len < sizeof(fb_cmd) - 1 ? trb_len : sizeof(fb_cmd) - 1;
+						kbcopy(fb_cmd, src, n);
+						fb_command(n);
+					}
+				}
+				/* re-arm the completed TRB at the cursor (commands advance it too) */
+				arm_one(k);
+			} else if (phys_ep == 3) {	/* ep1 IN done */
+				;
+			}
+		}
+	}
+}
