@@ -1,0 +1,26 @@
+diff --git a/security/mac_base.c b/security/mac_base.c
+index 982c6ed..111ad97 100644
+--- a/security/mac_base.c
++++ b/security/mac_base.c
+@@ -251,8 +251,21 @@ static LCK_MTX_DECLARE(mac_policy_mtx, &mac_lck_grp);
+ static int mac_policy_busy;
+ 
+ #if !XNU_TARGET_OS_OSX
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++/*
++ * SWEET is a software-only build (no KTRR/CTRR): the kernel image's
++ * __DATA_CONST is mapped read-only from the first vm_map, and
++ * machine_lockdown() (which precedes bsd_init) re-applies RNX to it. The
++ * SECURITY_READ_ONLY_LATE placement would therefore fault on every
++ * mac_policy_register() write during bsd_init, so keep the policy list
++ * and its static entries writable, as the macOS branch does.
++ */
++mac_policy_list_t mac_policy_list;
++static struct mac_policy_list_element mac_policy_static_entries[MAC_POLICY_LIST_CHUNKSIZE];
++#else
+ SECURITY_READ_ONLY_LATE(mac_policy_list_t) mac_policy_list;
+ SECURITY_READ_ONLY_LATE(static struct mac_policy_list_element) mac_policy_static_entries[MAC_POLICY_LIST_CHUNKSIZE];
++#endif
+ #else
+ mac_policy_list_t mac_policy_list;
+ #endif
