@@ -1,0 +1,8 @@
+diff --git a/config/MASTER.arm64.sweet b/config/MASTER.arm64.sweet
+--- a/config/MASTER.arm64.sweet
++++ b/config/MASTER.arm64.sweet
+@@ -113,3 +113,4 @@
+
+ options   CONFIG_RESLIDE_SHARED_CACHE		# <reslide_shared_cache>
+ options   CONFIG_KERNEL_TBI		# <kernel_tbi>
++options   CONFIG_UBSAN_MINIMAL		# <ubsan_minimal>
