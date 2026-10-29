@@ -1,8 +1,20 @@
 diff --git a/config/MASTER.arm64.sweet b/config/MASTER.arm64.sweet
+
 --- a/config/MASTER.arm64.sweet
 +++ b/config/MASTER.arm64.sweet
-@@ -113,3 +113,4 @@
-
+@@ -79,8 +79,8 @@
+ #  SCHED_DEBUG =    [ SCHED_BASE config_sched_grrr config_sched_proto ]
+ #  VM_BASE =        [ vm_pressure_events memorystatus jetsam config_code_decryption encrypted_swap config_deferred_reclaim ]
+ #  VM_RELEASE =     [ VM_BASE ]
+-#  VM_DEV =         [ VM_BASE dynamic_codesigning pgzalloc ]
+-#  VM_DEBUG =       [ VM_BASE dynamic_codesigning pgzalloc ]
++#  VM_DEV =         [ VM_BASE dynamic_codesigning ubsan_minimal pgzalloc ]
++#  VM_DEBUG =       [ VM_BASE dynamic_codesigning ubsan_minimal pgzalloc ]
+ #  VM_KASAN =       [ VM_BASE dynamic_codesigning config_kasan config_ubsan config_kcov config_ksancov kernel_tbi ]
+ #  SECURITY =       [ config_macf config_audit kernel_integrity config_csr config_csr_from_dt config_setuid config_kas_info config_secure_bsd_root config_arcade config_supplemental_signatures second_static_trust_cache reslide_shared_cache ]
+ #  BASE =           [ PF VPN SECURITY NFS ]
+@@ -113,3 +113,4 @@ options CONFIG_HYPERVISOR_PUBLIC   # unrestricted entitlement for hypervisor
+ 
  options   CONFIG_RESLIDE_SHARED_CACHE		# <reslide_shared_cache>
  options   CONFIG_KERNEL_TBI		# <kernel_tbi>
 +options   CONFIG_UBSAN_MINIMAL		# <ubsan_minimal>
