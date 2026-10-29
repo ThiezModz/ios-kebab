@@ -1,0 +1,7 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 0000000..0000000 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -119,6 +119,7 @@
+ bsd/dev/kebab/kebab_ufs.c		standard
++bsd/dev/kebab/kebab_fastboot.c		standard

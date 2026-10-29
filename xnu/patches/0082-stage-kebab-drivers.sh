@@ -20,5 +20,6 @@ cp "$here"/kebab_pmic.c bsd/dev/kebab/
 cp "$here"/kebab_ufs.c bsd/dev/kebab/
 cp "$here"/kebab_usb.c bsd/dev/kebab/
 cp "$here"/kebab_audio.c bsd/dev/kebab/
+cp "$here"/kebab_fastboot.c bsd/dev/kebab/
 cp "$here"/kebab_sm8250.h bsd/dev/kebab/
 echo "Staged ios-kebab drivers for SWEET (OnePlus 8T, SM8250)"
