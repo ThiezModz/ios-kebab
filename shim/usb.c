@@ -153,6 +153,7 @@ static char fb_cmd[256];
 static uint32_t evt_pos;
 static unsigned ep0_state;
 static unsigned ud_events;
+static unsigned ep0_data_in, ep0_data_len;
 enum { EP0_SETUP, EP0_DATA, EP0_WAIT_STATUS2, EP0_WAIT_STATUS3, EP0_STATUS };
 
 static void ud_start_trb(unsigned phys_ep, uint32_t trb_off, uint32_t buf_off,
@@ -427,14 +428,11 @@ static void ep0_setup(void)
 		return;
 	}
 	ep0_state = EP0_DATA;
-	if (data_in) {
-		if (n > length)
-			n = length;
-		clean_range((void *)((uintptr_t)&ud + UD_DATA_OFF), n);
-		ud_start_trb(1, UD_TRB1_OFF, UD_DATA_OFF, n, TRBCTL_DATA);
-	} else {
-		ud_start_trb(0, UD_TRB0_OFF, UD_DATA_OFF, 64, TRBCTL_DATA);
-	}
+	ep0_data_in = data_in;
+	ep0_data_len = n > length ? length : n;
+	/* the data TRB is armed when the controller reports XferNotReady
+	 * (the host's data token); arming it eagerly leaves the IN endpoint
+	 * silent on this controller */
 }
 
 
@@ -567,6 +565,17 @@ void usb_server(void)
 					ep0_state = EP0_STATUS;
 					ud_start_trb(phys_ep, phys_ep ? UD_TRB1_OFF : UD_TRB0_OFF,
 					    UD_DATA_OFF, 0, ctl);
+				}
+				continue;
+			}
+			if (evt_type == 3 && evt_status == 1) {	/* XferNotReady, data stage */
+				if (ep0_state == EP0_DATA) {
+					if (ep0_data_in) {
+						clean_range((void *)((uintptr_t)&ud + UD_DATA_OFF), ep0_data_len);
+						ud_start_trb(1, UD_TRB1_OFF, UD_DATA_OFF, ep0_data_len, TRBCTL_DATA);
+					} else {
+						ud_start_trb(0, UD_TRB0_OFF, UD_DATA_OFF, 64, TRBCTL_DATA);
+					}
 				}
 				continue;
 			}
