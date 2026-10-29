@@ -129,13 +129,15 @@ jobs:
           unset SDKROOT
           exec /usr/bin/xcrun "${orig[@]}"
           EOF
-          EOF
           chmod +x xcrun-ios
           mkdir -p ../sdk/Platforms/iPhoneOS.platform
 
-          # xnu-clang: the Xcode clang targeting arm64-apple-ios16
-          printf '#!/bin/bash\nexec xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -isysroot "$IOS_SDK" "$@"\n' > /usr/local/bin/xnu-clang
-          printf '#!/bin/bash\nexec xcrun --sdk iphoneos clang++ -target arm64-apple-ios16.0 -isysroot "$IOS_SDK" "$@"\n' > /usr/local/bin/xnu-clang++
+          # xnu-clang: the Xcode clang targeting arm64-apple-ios16. Straight
+          # `clang`, not `xcrun`: make exports the resolved SDKROOT into the
+          # recipe env and the real xcrun would try to resolve that with
+          # Apple's tooling and fail. DEVELOPER_DIR picks the toolchain.
+          printf '#!/bin/bash\nexec clang -target arm64-apple-ios16.0 -isysroot "$IOS_SDK" "$@"\n' > /usr/local/bin/xnu-clang
+          printf '#!/bin/bash\nexec clang++ -target arm64-apple-ios16.0 -isysroot "$IOS_SDK" "$@"\n' > /usr/local/bin/xnu-clang++
           chmod +x /usr/local/bin/xnu-clang /usr/local/bin/xnu-clang++
           make SDKROOT=iphoneos XCRUN="$PWD/xcrun-ios" \
             ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=SWEET \
