@@ -362,6 +362,7 @@ static void fb_command(uint32_t len)
 static void ep0_setup(void)
 {
 	const uint8_t *st = (const uint8_t *)((uintptr_t)&ud + UD_SETUP_OFF);
+	con_hex2("USB", "setup", st[0] | st[1] << 8, "val", st[2] | st[3] << 8);
 	uint8_t *data = (uint8_t *)((uintptr_t)&ud + UD_DATA_OFF);
 	uint8_t type = st[0], req = st[1];
 	uint16_t value = (uint16_t)(st[2] | st[3] << 8);
