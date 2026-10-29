@@ -179,17 +179,22 @@ jobs:
       - name: libcc_kext.a from the KDK (the kernel links -lcc_kext)
         run: |
           # LD_KERNEL_LIBS = -lcc_kext (makedefs/MakeInc.def); the public SDK
-          # lacks the archive, the KDK ships it. Same download the dxb build
-          # uses (dortania/KdkSupportPkg manifest); extract just the one file.
+          # lacks the archive, the KDK ships it. Same download + install the
+          # dxb build uses (dortania/KdkSupportPkg manifest).
           KDK_URL=$(curl -s "https://raw.githubusercontent.com/dortania/KdkSupportPkg/gh-pages/manifest.json" | \
             jq -r '.[] | select(.name=="Kernel Debug Kit 13.5 build 22G74") | .url')
           curl -sL --retry 3 -o /tmp/KDK.dmg "$KDK_URL"
+          ls -la /tmp/KDK.dmg
           hdiutil attach /tmp/KDK.dmg -nobrowse -quiet
-          pkgutil --expand-full "/Volumes/Kernel Debug Kit/KernelDebugKit.pkg" /tmp/kdk-pkg
-          LIB=$(find /tmp/kdk-pkg -name libcc_kext.a | head -1)
-          test -n "$LIB" || { echo "no libcc_kext.a in the KDK pkg"; exit 1; }
-          cp "$LIB" "$IOS_SDK/usr/local/lib/kernel/libcc_kext.a"
+          sudo installer -pkg "/Volumes/Kernel Debug Kit/KernelDebugKit.pkg" -target /
           hdiutil detach "/Volumes/Kernel Debug Kit" -quiet || true
+          LIB=$(find /Library/Developer/KDKs -name libcc_kext.a | head -1)
+          if [ -z "$LIB" ]; then
+            echo "no libcc_kext.a in the installed KDK; tree:"; find /Library/Developer/KDKs -maxdepth 4 | head -30
+            echo "Xcode toolchain:"; ls /Applications/Xcode_15.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib 2>/dev/null | grep -i cc_kext || true
+            exit 1
+          fi
+          cp "$LIB" "$IOS_SDK/usr/local/lib/kernel/libcc_kext.a"
           ls -la "$IOS_SDK/usr/local/lib/kernel/"
 
       - name: Build (iOS target, SWEET machine config)
