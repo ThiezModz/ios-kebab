@@ -26,6 +26,7 @@
 #include <kern/clock.h>
 #include <machine/machine_routines.h>
 #include <arm/caches_internal.h>
+#include <vm/pmap.h>			/* kernel_pmap (the kebab_adreno.c pattern) */
 #include <pexpert/pexpert.h>
 #include <pexpert/device_tree.h>
 #include <libkern/libkern.h>
