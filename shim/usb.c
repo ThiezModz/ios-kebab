@@ -448,6 +448,7 @@ void usb_server(void)
 	for (int i = 0; i < 1000000 && (rd32(dwc + DWC3_DSTS) & DSTS_DEVCTRLHLT); i++)
 		;
 	con_hex("USB", rd32(dwc + DWC3_DSTS));
+	con_hex2("USB", "dsts", rd32(dwc + DWC3_DSTS), "dctl", rd32(dwc + DWC3_DCTL));
 	ud_start_setup();
 	arm_ring();
 	con_str("USB", "server running (fastboot)");
@@ -463,6 +464,23 @@ void usb_server(void)
 			evt_pos += 4;
 			wr32(dwc + DWC3_GEVNTCOUNT, evt_pos & 0xffff);
 
+			if (phys_ep == 0 && (status >> 16 & 0x3ff) >= 1 && (status >> 16 & 0x3ff) <= 7) {
+				/* device events (DisConn, USBRst, ConnectDone, ULStChng...):
+				 * the low event number = in bits 16.. */
+				unsigned ev = status >> 16 & 0x3ff;
+				con_hex2("USB", "evt", ev, "st", status);
+				const char *nm;
+				if (ev == 1) nm = "DisConn";
+				else if (ev == 2) nm = "USBRst";
+				else if (ev == 3) nm = "ConnectDone";
+				else if (ev == 4) nm = "ULStChng";
+				else if (ev == 5) nm = "WkUp";
+				else if (ev == 6) nm = "Hiber";
+				else if (ev == 7) nm = "VndrDevTst";
+				else nm = "dev";
+				con_str("USB", nm);
+				continue;
+			}
 			if (evt_type == 0x4) {	/* XferNotReady: arm the setup / the bulk ring */
 				if (phys_ep == 0)
 					ud_start_setup();
