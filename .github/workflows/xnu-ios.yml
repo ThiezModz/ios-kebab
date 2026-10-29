@@ -44,10 +44,24 @@ jobs:
 
       - name: Fetch the iPhoneOS SDK (16.5, the xnu-8796 era)
         run: |
-          git clone -q --depth 1 https://github.com/theos/sdks sdk-theos
-          ls sdk-theos | grep -i iphoneos
-          SDK=$(ls -d sdk-theos/iPhoneOS16.5.sdk | head -1)
-          echo "IOS_SDK=$PWD/$SDK" >> "$GITHUB_ENV"
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git sdk-theos-git
+          git -C sdk-theos-git sparse-checkout set iPhoneOS16.5.sdk
+          echo "IOS_SDK=$PWD/sdk-theos-git/iPhoneOS16.5.sdk" >> "$GITHUB_ENV"
+
+      - name: The xnu SDK overlay (availability.pl + the firehose headers)
+        run: |
+          # what Apple's internal SDK has and the public one lacks
+          mkdir -p "$IOS_SDK/usr/local/include/kernel/os" "$IOS_SDK/usr/local/include/os" \
+            "$IOS_SDK/usr/local/lib/kernel" "$IOS_SDK/usr/local/libexec"
+          git init -q av && (cd av && git remote add origin https://github.com/apple-oss-distributions/AvailabilityVersions.git && \
+            git fetch -q --depth 1 origin 5d9baee345b3bc72b26c71adc65f94f2d5e9ced2 && git checkout -q FETCH_HEAD)
+          cp av/availability.pl "$IOS_SDK/usr/local/libexec/" && chmod +x "$IOS_SDK/usr/local/libexec/availability.pl"
+          git init -q ld && (cd ld && git remote add origin https://github.com/apple-oss-distributions/libdispatch.git && \
+            git fetch -q --depth 1 origin a641558f447659d90ad002ef0ee6f0212273fbfc && git checkout -q FETCH_HEAD)
+          (unifdef -DOS_FIREHOSE_SPI=1 -DKERNEL=1 ld/os/firehose_buffer_private.h || [ $? -eq 1 ]) > \
+            "$IOS_SDK/usr/local/include/kernel/os/firehose_buffer_private.h"
+          cp ld/src/firehose/firehose_types.defs "$IOS_SDK/usr/local/include/kernel/os/firehose_types.defs"
+          ls "$IOS_SDK/usr/local/libexec/"
 
       - name: Fetch xnu (the macos-13.5 release, like the dxb build)
         run: |
