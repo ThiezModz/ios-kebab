@@ -152,6 +152,7 @@ static char fb_cmd[256];
 
 static uint32_t evt_pos;
 static unsigned ep0_state;
+static unsigned ud_events;
 enum { EP0_SETUP, EP0_DATA, EP0_WAIT_STATUS2, EP0_WAIT_STATUS3, EP0_STATUS };
 
 static void ud_start_trb(unsigned phys_ep, uint32_t trb_off, uint32_t buf_off,
@@ -551,6 +552,8 @@ void usb_server(void)
 			uint32_t phys_ep = (ev >> 1) & 0x1f;
 			uint32_t evt_type = (ev >> 6) & 0xf;
 			uint32_t evt_status = (ev >> 12) & 0xf;
+			if (ud_events++ < 200)
+				con_hex2("USB", "raw", ev, "ep", phys_ep);
 
 			if (evt_type == 3 && evt_status == 2) {	/* XferNotReady, control status */
 				if (ep0_state == EP0_WAIT_STATUS2 || ep0_state == EP0_WAIT_STATUS3) {
