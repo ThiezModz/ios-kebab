@@ -205,28 +205,9 @@ if __name__ == '__main__':
     ap.add_argument('--cmdline', default='debug=0xc serial=3 cpus=1 keepsyms=1')
     ap.add_argument('--ramdisk', help='root image for md0 (boot with rd=md0)')
     ap.add_argument('--ramdisk-reserve', help='reserve N bytes for a streamed md0 (no data stored)')
-    ap.add_argument('--ramdisk-reserve', help='reserve N bytes for a streamed md0 (no data stored)')
     a = ap.parse_args()
     blob, info = build(a.kernel, a.adt, a.cmdline, a.ramdisk)
-    if a.ramdisk_reserve is not None:
-        # the region is declared in the ADT (IOFindBSDRoot makes md0 of it) but
-        # the payload carries no data: the fastboot driver streams the root in
-        import struct as _st
-        root, _ = adt.parse(blob)
-        size = int(a.ramdisk_reserve, 0)
-        virt_base, entry_va, adt_off, adt_size, kernel_end, phys_base, mem_size = _st.unpack_from('<7Q', blob, 0x10)
-        rd_va = kernel_end
-        rd_pa = rd_va - virt_base + phys_base
-        chosen = next(c for c in root.children if c.name == 'chosen')
-        mmap = next(c for c in chosen.children if c.name == 'memory-map')
-        assert mmap.prop('RAMDisk') is None, 'ADT already has a RAMDisk'
-        mmap.props.append(('RAMDisk', 0, _st.pack('<2Q', rd_pa, size)))
-        # a zero-data segment carries the region (vmsize only)
-        nsegs = _st.unpack_from('<I', blob, 12)[0]
-        seg = _st.pack('<4Q', rd_va, size, adt_off + adt_size, 0)
-        blob = blob + seg
-        _st.pack_into('<I', blob, 12, nsegs + 1)
-        info['ramdisk'] = (hex(rd_pa), hex(size))
+
     open(a.out, 'wb').write(blob)
     open(a.out, 'wb').write(blob)
     for k, v in info.items():
