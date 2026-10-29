@@ -126,10 +126,12 @@ def payload_info(payload):
     return virt_base, entry_va, adt_off, adt_size, kernel_end, phys_base, mem_size
 
 
-def build_ram_image(payload):
+def build_ram_image(payload, cmdline_override=None):
     """(phys_base, img, boot_args_pa, entry_pa): segment layout, as the phone shim does."""
     virt_base, entry_va, adt_off, adt_size, kernel_end, phys_base, mem_size = payload_info(payload)
     cmdline = payload[0x48:0x48 + BOOT_LINE_LENGTH]
+    if cmdline_override is not None:
+        cmdline = cmdline_override.encode()[:BOOT_LINE_LENGTH].ljust(BOOT_LINE_LENGTH, b'\0')
     delta = phys_base - virt_base
     adt_pa = kernel_end + delta
     ba_pa = (adt_pa + adt_size + PAGE - 1) & ~(PAGE - 1)
@@ -182,12 +184,17 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument('--payload-only', help='a SWEETXNU payload placed by loader devices (XNU mode)')
     g.add_argument('--payload', help='payload the shim boots from /chosen/linux,initrd-* (demo mode)')
+    ap.add_argument('--cmdline', help='boot-args override (payload-only mode; padded to 608 bytes)')
     ap.add_argument('--shim', help='shim/out/Image for demo mode')
     ap.add_argument('--dtb', help='FDT with linux,initrd-start/end in /chosen (demo mode)')
     ap.add_argument('--kernel', help='unstripped XNU Mach-O for _iso_font text decoding')
+    ap.add_argument('--font', help='pre-extracted iso_font file (tools/xnu-font.py) instead of llvm-nm')
     ap.add_argument('--secs', type=float, default=15, help='run duration (default 15)')
     ap.add_argument('--cpu', default='cortex-a76', help='QEMU CPU model')
+    ap.add_argument('--mem', default='4G', help='guest RAM, e.g. 6G (default 4G)')
     ap.add_argument('--gdb', action='store_true', help='halt at start, gdb stub on :1234')
+    ap.add_argument('--hmp', action='append', default=[],
+                    help='extra monitor command after stop (repeatable), e.g. "info registers"')
     ap.add_argument('--fail-on-panic', action='store_true',
                     help='exit 2 for a visible panic, 3 for undecodable/blank (needs --kernel)')
     ap.add_argument('--check-env', action='store_true', help='only check QEMU is installed')
@@ -197,8 +204,8 @@ def main():
         return 0 if check_qemu() else 1
     if not check_qemu():
         return 1
-    if a.fail_on_panic and not a.kernel:
-        ap.error('--fail-on-panic requires --kernel')
+    if a.fail_on_panic and not (a.kernel or a.font):
+        ap.error('--fail-on-panic requires --kernel or --font')
     if a.payload and (not a.shim or not a.dtb):
         ap.error('--payload needs --shim and --dtb (see scripts/mk-qemu-image.sh)')
     os.makedirs(a.outdir, exist_ok=True)
@@ -208,11 +215,12 @@ def main():
         os.unlink(mon)
 
     cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1',
-           '-m', '4G', '-nographic', '-serial', f'file:{out}/serial.txt',
+           '-m', a.mem, '-nographic', '-serial', f'file:{out}/serial.txt',
            '-qmp', f'unix:{mon},server,nowait', '-no-reboot',
+           '-gdb', 'tcp::1234',
            '-d', 'int,guest_errors,unimp', '-D', f'{out}/qemu.log']
     if a.payload_only:
-        phys_base, img, ba_pa, entry_pa = build_ram_image(open(a.payload_only, 'rb').read())
+        phys_base, img, ba_pa, entry_pa = build_ram_image(open(a.payload_only, 'rb').read(), a.cmdline)
         open(f'{out}/ram.bin', 'wb').write(img)
         open(f'{out}/stub.bin', 'wb').write(stub(ba_pa, entry_pa))
         print(f'phys_base={phys_base:#x} boot_args={ba_pa:#x} entry={entry_pa:#x}', file=sys.stderr)
@@ -223,7 +231,7 @@ def main():
         cmd += ['-kernel', os.path.abspath(a.shim), '-dtb', os.path.abspath(a.dtb),
                 '-device', f'loader,file={os.path.abspath(a.payload)},addr={PAYLOAD_ADDR:#x},force-raw=on']
     if a.gdb:
-        cmd += ['-S', '-gdb', 'tcp::1234']
+        cmd += ['-S']
 
     payload = open(a.payload or a.payload_only, 'rb').read()
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
@@ -235,13 +243,28 @@ def main():
 
     result = {'status': 'qemu_exited', 'qemu_returncode': p.returncode}
     if p.poll() is None:
-        qmp(mon, 'stop', pmemsave=(FB_BASE, FB_STRIDE * FB_H, f'{out}/fb.raw'))
+        hmp_out = qmp(mon, 'stop', *a.hmp, pmemsave=(FB_BASE, FB_STRIDE * FB_H, f'{out}/fb.raw'))
+        if a.hmp:
+            with open(f'{out}/regs.txt', 'w') as f:
+                for c, r in zip(('stop',) + tuple(a.hmp), hmp_out):
+                    f.write('\n(qemu) %s\n%s\n' % (c, r))
         p.kill()
         p.wait()
         raw = open(f'{out}/fb.raw', 'rb').read()
         write_png(f'{out}/fb.png', raw)
         if a.kernel:
             screen, unknown = decode_xnu(raw, payload_font(payload, a.kernel))
+            open(f'{out}/fb.txt', 'w').write(screen)
+            if 'panic(cpu ' in screen or 'SWEET EARLY PANIC:' in screen:
+                result = {'status': 'panic'}
+            elif unknown:
+                result = {'status': 'incomplete_decode', 'unknown_glyphs': unknown}
+            elif screen.strip():
+                result = {'status': 'no_panic_observed'}
+            else:
+                result = {'status': 'blank_screen'}
+        elif a.font:
+            screen, unknown = decode_xnu(raw, open(a.font, 'rb').read())
             open(f'{out}/fb.txt', 'w').write(screen)
             if 'panic(cpu ' in screen or 'SWEET EARLY PANIC:' in screen:
                 result = {'status': 'panic'}

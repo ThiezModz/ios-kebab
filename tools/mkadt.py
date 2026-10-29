@@ -83,9 +83,15 @@ def node(name, props=(), children=()):
 
 
 def build(seed=None, qemu=False, highmem=False, high_base=HIGH_PHYS_BASE,
-          high_size=HIGH_MEM_SIZE, gmu_fw=None):
-    """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-kebab.py)."""
-    phys_base, mem_size = (high_base, high_size) if highmem else (PHYS_BASE, MEM_SIZE)
+          high_size=HIGH_MEM_SIZE, qemu_base=None, qemu_size=None, gmu_fw=None):
+    """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ
+    (tools/qemu-kebab.py). qemu_base/size override the dram window for big
+    RAM-disk tests under QEMU."""
+    if qemu_base or qemu_size:
+        assert qemu and qemu_base and qemu_size, '--qemu-dram-* needs --qemu'
+        phys_base, mem_size = qemu_base, qemu_size
+    else:
+        phys_base, mem_size = (high_base, high_size) if highmem else (PHYS_BASE, MEM_SIZE)
     # Carve the panic log off the top so the kernel never allocates over it.
     panic_base = phys_base + mem_size - PANIC_LOG_SIZE
     mem_size -= PANIC_LOG_SIZE
@@ -268,14 +274,20 @@ if __name__ == '__main__':
     ap.add_argument('--highmem', action='store_true')
     ap.add_argument('--highmem-base', default=hex(HIGH_PHYS_BASE))
     ap.add_argument('--highmem-size', default=hex(HIGH_MEM_SIZE))
+    ap.add_argument('--qemu-dram-base', default=None,
+                    help='QEMU dram-base override (big RAM-disk tests)')
+    ap.add_argument('--qemu-dram-size', default=None,
+                    help='QEMU dram-size override, e.g. 0x140000000')
     ap.add_argument('--gmu-fw', help='a650_gmu.bin to embed as /chosen/kebab-gmu-fw')
     a = ap.parse_args()
     gmu = open(a.gmu_fw, 'rb').read() if a.gmu_fw else None
     if gmu:
         print(f'embedding {a.gmu_fw}: {len(gmu)} bytes as /chosen/kebab-gmu-fw', file=sys.stderr)
+    qemu_base = int(a.qemu_dram_base, 0) if a.qemu_dram_base else None
+    qemu_size = int(a.qemu_dram_size, 0) if a.qemu_dram_size else None
     root = build(qemu=a.qemu, highmem=a.highmem,
                  high_base=int(a.highmem_base, 0), high_size=int(a.highmem_size, 0),
-                 gmu_fw=gmu)
+                 qemu_base=qemu_base, qemu_size=qemu_size, gmu_fw=gmu)
     blob = adt.serialize(root)
     open(a.out, 'wb').write(blob)
     if a.dump:
