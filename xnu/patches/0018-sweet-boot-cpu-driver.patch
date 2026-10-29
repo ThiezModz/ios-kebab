@@ -184,7 +184,7 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 +    "   {"
 +    "     'IOClass'         = SweetCPU;"
 +    "     'IOProviderClass' = IOPlatformDevice;"
-+    "     'IONameMatch'     = 'qcom,kryo585';"
++    "     'IONameMatch'     = 'qcom,kryo470';"
 +    "     'IOProbeScore'    = 10000:32;"
 +    "   },"
  #endif
