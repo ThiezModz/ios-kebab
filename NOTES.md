@@ -166,13 +166,22 @@ speed-up experiment (QEMU virt MPIDRs match mkadt's core<<8 regs; PSCI
 CPU_ON via virt's default PSCI).
 
 **SMP on QEMU (2026-10-30):** the 4-CPU boot (`mkadt --qemu-cpus 4` +
-`--smp 4` + `cpus=4`) panicked in SweetCPU::startCPU — sleh.c:951
-"Undefined kernel instruction", instr d4000003 at the PSCI call site.
-d4000003 = **smc #0** (not a BRK): QEMU virt with secure=off has no EL3
-to take the SMC, so it traps as undefined. QEMU virt's PSCI conduit is
-HVC. **0111** adds `sweet_psci_hvc=1` (hvc #0 instead of smc #0, parsed
-per-boot); the phone path keeps smc. Disassembly of the kernel confirmed
-the encoding before the patch was written.
+`--smp 4` + `cpus=4`) hit three walls, each fixed:
+1. SMC trap: SweetCPU's PSCI used `smc #0`; QEMU virt (secure=off) has
+   no EL3 → undefined instruction panic. **0111** adds `sweet_psci_hvc=1`
+   (hvc #0; the phone keeps smc). QEMU's psci dispatches the HVC fine.
+2. rc=-2 INVALID_PARAMS: QEMU virt's MPIDRs number cores in **Aff0**
+   (arm_build_mp_affinity: 0x0, 0x1, 0x2, ...), while mkadt emitted the
+   kebab Aff1:Aff0 scheme (0x100...). mkadt --qemu now emits reg=core;
+   qemu-kebab.py --smp emits `N,clusters=1,cores=N` explicitly (QEMU 11
+   would otherwise default to N clusters × 1 core).
+3. SweetCPU's topology check rejected the Aff0 regs — **0112** accepts
+   them when sweet_psci_hvc=1 (phys_id < SWEET_SMP_MAX_CPUS).
+The live display works throughout: `--display gtk` = ramfb driven by a
+host-side fw_cfg RAMFBCfg pointing at the sweet fb (0x9c000000, XR24,
+1080x2400 stride 4320) — the console renders in a GTK window and
+SpringBoard will too (IOMobileFramebuffer "AppleCLCD" is already
+published, patches 0046/0056/0061).
 
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
