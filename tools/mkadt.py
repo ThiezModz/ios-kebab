@@ -83,7 +83,8 @@ def node(name, props=(), children=()):
 
 
 def build(seed=None, qemu=False, highmem=False, high_base=HIGH_PHYS_BASE,
-          high_size=HIGH_MEM_SIZE, qemu_base=None, qemu_size=None, gmu_fw=None):
+          high_size=HIGH_MEM_SIZE, qemu_base=None, qemu_size=None, gmu_fw=None,
+          qemu_cpus=1):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ
     (tools/qemu-kebab.py). qemu_base/size override the dram window for big
     RAM-disk tests under QEMU."""
@@ -148,10 +149,10 @@ def build(seed=None, qemu=False, highmem=False, high_base=HIGH_PHYS_BASE,
     # KEBAK SMP: all eight Kryo 585 cores in physical-core order (0-3
     # Cortex-A55, 4-6 Cortex-A77, 7 = A77 "prime"), one homogeneous cluster.
     # The kernel defaults to one and uses cpus=N to select an initial prefix
-    # (N <= 8). QEMU retains its original single-CPU tree: its MPIDRs differ
-    # from kebab's.
+    # (N <= 8). QEMU keeps a single CPU by default (its MPIDRs differ from
+    # kebab's); --qemu-cpus N grows the tree for MTTCG boots.
     cpu_nodes = []
-    for core in range(1 if qemu else 8):
+    for core in range(qemu_cpus if qemu else 8):
         cpu_nodes.append(node(f'cpu{core}', [
             ph(),
             ('device_type', cstr('cpu')),
@@ -271,6 +272,7 @@ if __name__ == '__main__':
     ap.add_argument('out')
     ap.add_argument('--dump', action='store_true')
     ap.add_argument('--qemu', action='store_true')
+    ap.add_argument('--qemu-cpus', help='CPU count for the QEMU tree (default 1)')
     ap.add_argument('--highmem', action='store_true')
     ap.add_argument('--highmem-base', default=hex(HIGH_PHYS_BASE))
     ap.add_argument('--highmem-size', default=hex(HIGH_MEM_SIZE))
@@ -285,9 +287,11 @@ if __name__ == '__main__':
         print(f'embedding {a.gmu_fw}: {len(gmu)} bytes as /chosen/kebab-gmu-fw', file=sys.stderr)
     qemu_base = int(a.qemu_dram_base, 0) if a.qemu_dram_base else None
     qemu_size = int(a.qemu_dram_size, 0) if a.qemu_dram_size else None
+    qemu_cpus = 1 if not a.qemu else (int(a.qemu_cpus) if a.qemu_cpus else 1)
     root = build(qemu=a.qemu, highmem=a.highmem,
                  high_base=int(a.highmem_base, 0), high_size=int(a.highmem_size, 0),
-                 qemu_base=qemu_base, qemu_size=qemu_size, gmu_fw=gmu)
+                 qemu_base=qemu_base, qemu_size=qemu_size, gmu_fw=gmu,
+                 qemu_cpus=qemu_cpus)
     blob = adt.serialize(root)
     open(a.out, 'wb').write(blob)
     if a.dump:

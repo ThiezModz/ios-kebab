@@ -192,6 +192,12 @@ def main():
     ap.add_argument('--secs', type=float, default=15, help='run duration (default 15)')
     ap.add_argument('--cpu', default='cortex-a76', help='QEMU CPU model')
     ap.add_argument('--mem', default='4G', help='guest RAM, e.g. 6G (default 4G)')
+    ap.add_argument('--smp', default='1', help='guest CPU count (default 1); pair with '
+                    'mkadt --qemu-cpus N and a cpus=N boot-arg')
+    ap.add_argument('--display', nargs='?', const='gtk', choices=['gtk', 'vnc'],
+                    help='live display of the guest framebuffer: ramfb driven by a host-side '
+                         'fw_cfg config pointing at the sweet fb (0x9c000000, 1080x2400); '
+                         'gtk (default) or vnc=:0')
     ap.add_argument('--gdb', action='store_true', help='halt at start, gdb stub on :1234')
     ap.add_argument('--hmp', action='append', default=[],
                     help='extra monitor command after stop (repeatable), e.g. "info registers"')
@@ -214,11 +220,24 @@ def main():
     if os.path.exists(mon):
         os.unlink(mon)
 
-    cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1',
-           '-m', a.mem, '-nographic', '-serial', f'file:{out}/serial.txt',
+    cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', a.smp,
+           '-m', a.mem, '-serial', f'file:{out}/serial.txt',
            '-qmp', f'unix:{mon},server,nowait', '-no-reboot',
            '-gdb', 'tcp::1234',
            '-d', 'int,guest_errors,unimp', '-D', f'{out}/qemu.log']
+    if a.display:
+        # ramfb driven host-side: the fw_cfg config tells QEMU's ramfb to
+        # scan out the guest's sweet framebuffer (PA 0x9c000000) directly —
+        # no guest-side driver needed (hakios-style live display).
+        # RAMFBCfg { u64 addr; u32 fourcc, flags, width, height, stride; }
+        # fourcc 0x34325258 = "XR24" (XRGB8888, the sweet fb layout)
+        cfg = struct.pack('<QIIIII', 0x9c000000, 0x34325258, 0, FB_W, FB_H, FB_STRIDE)
+        open(f'{out}/ramfb.cfg', 'wb').write(cfg)
+        display = 'gtk,zoom-to-fit=on' if a.display == 'gtk' else 'vnc=:0'
+        cmd += ['-device', 'ramfb', '-fw_cfg', f'name=ramfb,file={out}/ramfb.cfg',
+                '-display', display]
+    else:
+        cmd += ['-nographic']
     if a.payload_only:
         phys_base, img, ba_pa, entry_pa = build_ram_image(open(a.payload_only, 'rb').read(), a.cmdline)
         open(f'{out}/ram.bin', 'wb').write(img)
