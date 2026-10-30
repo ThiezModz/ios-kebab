@@ -130,6 +130,18 @@ steps crawl under TCG. Open question: why dyld skips the cache (file
 missing on the root? boot-session UUID mismatch? — the systrace run with
 systrace=2 systrace_name=launchd watches the opens).
 
+**Cache refusal root-caused (2026-10-30 ~01:00):** systrace shows dyld opens
+dyld_shared_cache_arm64, reads 0x4000 of the header, then NEVER calls
+shared_region_map_and_slide_np — refusal is dyld-side. The cache (extracted
+from stream-root.img with `7z e` — multi-file: main 384K + .01/.02/...
+subcaches) is a dyld4 header (magic "dyld_v1   arm64") with
+**uuid 8F970452-C9E3-3E88-B114-FEB1864BC9E0 at offset 0x58**, while the
+kernel's bootsessionuuid_string is empty (no iBoot) — mismatch by
+construction. **0100** copies the cache uuid into bootsessionuuid_string in
+sweet_amfi_policy_register (bsd_init, pre-exec) so kern.bootsessionuuid
+matches. (The kernel's check_np ENOMEM = start_address query on an empty
+region — the map never ran.)
+
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
 
