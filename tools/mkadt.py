@@ -157,7 +157,9 @@ def build(seed=None, qemu=False, highmem=False, high_base=HIGH_PHYS_BASE,
             ph(),
             ('device_type', cstr('cpu')),
             ('compatible', cstr('qcom,kryo585') + cstr('ARM,v8')),
-            ('reg', u32(core << 8)),  # actual MPIDR Aff1:Aff0, NOT logical ID
+            # QEMU virt's MPIDRs number cores in Aff0 (arm_build_mp_affinity:
+            # 0x0, 0x1, 0x2, ...); the real kebab MPIDRs use Aff1:Aff0 (0x100...).
+            ('reg', u32(core if qemu else core << 8)),
             ('cpu-id', u32(core)),   # descriptive: XNU assigns IDs by DT order
             ('cluster-id', u32(0)),  # descriptive; see ml_parse_cpu_topology
             ('cluster-type', u32(0)),  # homogeneous CLUSTER_TYPE_SMP, not AMP

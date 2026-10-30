@@ -193,7 +193,9 @@ def main():
     ap.add_argument('--cpu', default='cortex-a76', help='QEMU CPU model')
     ap.add_argument('--mem', default='4G', help='guest RAM, e.g. 6G (default 4G)')
     ap.add_argument('--smp', default='1', help='guest CPU count (default 1); pair with '
-                    'mkadt --qemu-cpus N and a cpus=N boot-arg')
+                    'mkadt --qemu-cpus N and a cpus=N boot-arg. Emitted as one cluster '
+                    'of N cores so MPIDRs stay core<<8 (QEMU 11 would otherwise default '
+                    'to N clusters)')
     ap.add_argument('--display', nargs='?', const='gtk', choices=['gtk', 'vnc'],
                     help='live display of the guest framebuffer: ramfb driven by a host-side '
                          'fw_cfg config pointing at the sweet fb (0x9c000000, 1080x2400); '
@@ -220,7 +222,8 @@ def main():
     if os.path.exists(mon):
         os.unlink(mon)
 
-    cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', a.smp,
+    smp = a.smp if ',' in a.smp else f'{a.smp},clusters=1,cores={a.smp}'
+    cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', smp,
            '-m', a.mem, '-serial', f'file:{out}/serial.txt',
            '-qmp', f'unix:{mon},server,nowait', '-no-reboot',
            '-gdb', 'tcp::1234',
