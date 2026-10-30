@@ -153,6 +153,18 @@ cache against the IPSW's original cryptex bytes (rsync fidelity).
 **The uncached boot WORKS meanwhile:** launchd + libignition run; everything
 is just 10-100x slower under TCG.
 
+**Live display (2026-10-30):** `qemu-kebab.py --display gtk` drives QEMU's
+ramfb host-side: a fw_cfg "ramfb" RAMFBCfg (addr 0x9c000000, fourcc XR24,
+1080x2400 stride 4320, 28-byte struct `<QIIIII`) points the standalone
+ramfb (QEMU 11's plain `-device ramfb` IS standalone) at the guest's sweet
+fb — the console (and SpringBoard later) render live in a GTK window
+(zoom-to-fit) or `--display vnc` (vnc=:0). The kernel already publishes
+IOMobileFramebuffer "AppleCLCD" (patch 0046/0056/0061) at 0x9c000000,
+presented as 1125x2436 — SpringBoard's fb needs are provisioned.
+`--smp N` + `mkadt --qemu-cpus N` + boot-arg `cpus=N` = the MTTCG
+speed-up experiment (QEMU virt MPIDRs match mkadt's core<<8 regs; PSCI
+CPU_ON via virt's default PSCI).
+
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
 
