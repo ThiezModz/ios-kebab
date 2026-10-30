@@ -1,0 +1,48 @@
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 12c7c2e..85c5054 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -21,6 +21,30 @@
+ #include <IOKit/IOTimerEventSource.h>
+ #include <libkern/c++/OSArray.h>
+ #include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++
++/*
++ * Presented (logical) display size: ADT /arm-io/disp0 canvas-width/height
++ * (tools/mkadt.py); AppleCLCD and SweetHIDTouch must agree on it.
++ * Ported from bergamota 0100.
++ */
++static void
++sweet_canvas_size(int *w, int *h)
++{
++	DTEntry e;
++	void const *p;
++	unsigned int sz;
++	if (SecureDTLookupEntry(NULL, "/arm-io/disp0", &e) != kSuccess) {
++		return;
++	}
++	if (SecureDTGetProperty(e, "canvas-width", &p, &sz) == kSuccess && sz == 4 && *(const uint32_t *)p) {
++		*w = (int)*(const uint32_t *)p;
++	}
++	if (SecureDTGetProperty(e, "canvas-height", &p, &sz) == kSuccess && sz == 4 && *(const uint32_t *)p) {
++		*h = (int)*(const uint32_t *)p;
++	}
++}
++
+ #include "IOHIDEventService.h"
+ #include "IOHIDEventServiceUserClient.h"
+ #include "IOHIDEvent.h"
+@@ -433,8 +457,10 @@ SweetHIDTouch::start(IOService *provider)
+ 	}
+ 	int native = 0;
+ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
+-	fLogicalW = native ? 1080 : 1125;
+-	fLogicalH = native ? 2400 : 2436;
++	int canvasW = 1125, canvasH = 2436;
++	sweet_canvas_size(&canvasW, &canvasH);
++	fLogicalW = native ? 1080 : canvasW;
++	fLogicalH = native ? 2400 : canvasH;
+ 	fOffX = (fLogicalW - 1080) / 2;
+ 	fOffY = (fLogicalH - 2400) / 2;
+ 	/* The digitizer covers the main display (backboardd maps it 1:1). */

@@ -1,0 +1,50 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index a62416c..87e4af7 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -80,6 +80,30 @@ enum {
+  */
+ #define SWEET_FB_LOGICAL_W              1125
+ #define SWEET_FB_LOGICAL_H              2436
++#include <pexpert/device_tree.h>
++
++/*
++ * Presented (logical) display size: ADT /arm-io/disp0 canvas-width/height
++ * (tools/mkadt.py; 1125x2436 = iPhone X @3x, 750x1624 = the same 375x812
++ * points @2x, 2.25x fewer pixels for CoreAnimation's CPU renderer).
++ * AppleCLCD and SweetHIDTouch must agree on it. Ported from bergamota 0100.
++ */
++static void
++sweet_canvas_size(int *w, int *h)
++{
++	DTEntry e;
++	void const *p;
++	unsigned int sz;
++	if (SecureDTLookupEntry(NULL, "/arm-io/disp0", &e) != kSuccess) {
++		return;
++	}
++	if (SecureDTGetProperty(e, "canvas-width", &p, &sz) == kSuccess && sz == 4 && *(const uint32_t *)p) {
++		*w = (int)*(const uint32_t *)p;
++	}
++	if (SecureDTGetProperty(e, "canvas-height", &p, &sz) == kSuccess && sz == 4 && *(const uint32_t *)p) {
++		*h = (int)*(const uint32_t *)p;
++	}
++}
+ #define SWEET_FB_FORMAT_BGRA            0x42475241
+ 
+ class IOMobileFramebuffer : public IOService {
+@@ -170,9 +194,11 @@ AppleCLCD::start(IOService *provider)
+ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
+ 	fLogicalW = fWidth;
+ 	fLogicalH = fHeight;
+-	if (!native && fWidth <= SWEET_FB_LOGICAL_W && fHeight <= SWEET_FB_LOGICAL_H) {
+-		fLogicalW = SWEET_FB_LOGICAL_W;
+-		fLogicalH = SWEET_FB_LOGICAL_H;
++	int canvasW = SWEET_FB_LOGICAL_W, canvasH = SWEET_FB_LOGICAL_H;
++	sweet_canvas_size(&canvasW, &canvasH);
++	if (!native) {
++		fLogicalW = (uint32_t)canvasW;
++		fLogicalH = (uint32_t)canvasH;
+ 	}
+ 	fOffX = (int32_t)(fLogicalW - fWidth) / 2;
+ 	fOffY = (int32_t)(fLogicalH - fHeight) / 2;

@@ -122,6 +122,12 @@ def build(seed=None, qemu=False, highmem=False, high_base=HIGH_PHYS_BASE,
         # SpringBoard's FBSDisplayMode "infxinf@0x" invalid. 1080x2400 @3x =
         # 360x800 points (like iPhone X class devices).
         ('display-scale', u32(3)),
+        # MobileGestalt resolves the Wi-Fi MAC from /chosen mac-address-wifi0;
+        # without it, it waits for an IONetworkController that never appears
+        # (one stall per question, forever on the Apple logo). Synthetic
+        # locally-administered addresses (bergamota's fix).
+        ('mac-address-wifi0', bytes([0x02, 0x00, 0x5e, 0x77, 0xe0, 0x01])),
+        ('mac-address-bluetooth0', bytes([0x02, 0x00, 0x5e, 0x77, 0xe0, 0x02])),
         # XNU derives IOPlatformUUID (gethostuuid) from these on arm; without
         # them CFPreferences cannot use kCFPreferencesCurrentHost (no ByHost
         # files), so e.g. DataMigration never records LastSystemVersion and
