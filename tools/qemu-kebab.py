@@ -151,9 +151,69 @@ def build_ram_image(payload, cmdline_override=None):
     return phys_base, bytes(img), ba_pa, entry_va + delta
 
 
+def _adr(rd, imm):
+    """ADR x<rd>, #imm (signed 21-bit PC-relative)."""
+    assert -0x100000 <= imm < 0x100000
+    return 0x10000000 | (rd << 0) | ((imm & 3) << 29) | ((imm >> 2 & 0x7ffff) << 5)
+
+def _movz(rd, imm16, lsl=0):
+    return 0xD2800000 | (rd << 0) | (imm16 << 5) | (lsl << 21)
+
+def _movk(rd, imm16, lsl=0):
+    return 0xF2800000 | (rd << 0) | (imm16 << 5) | (lsl << 21)
+
+def _ldr_lit(rt, off):
+    """LDR x<rt>, [pc, #off] — off multiple of 4."""
+    assert off % 4 == 0 and 0 <= off < 0x100000
+    return 0x58000000 | (rt << 0) | ((off >> 2) << 5)
+
+def _str_off(rt, rn):
+    """STR x<rt>, [x<rn>]"""
+    return 0xF9000000 | (rn << 5) | (rt << 0)
+
+def _br(rn):
+    return 0xD61F0000 | (rn << 5)
+
 def stub(ba_pa, entry_pa):
-    # ldr x0, =ba ; ldr x1, =entry ; br x1 ; nop ; .quad ba ; .quad entry
-    return struct.pack('<4I2Q', 0x58000080, 0x580000a1, 0xd61f0020, 0xd503201f, ba_pa, entry_pa)
+    """The 6-instruction boot stub, extended: it first programs QEMU's
+    ramfb over the fw_cfg DMA interface (select the etc/ramfb file by
+    name, then write the big-endian RAMFBCfg), so the host-side display
+    initializes without any guest driver. Then jumps to the kernel with
+    x0 = boot args, as before."""
+    fw_dma = 0x09020010          # virt fw_cfg DMA port (64-bit LE)
+    name = b'etc/ramfb\0'
+    cfg = struct.pack('>QIIIII', 0x9c000000, 0x34325258, 0, FB_W, FB_H, FB_STRIDE)
+    # layout: 10 insns at 0x00..0x28, literals, name, ctrl1, ctrl2, cfg
+    off_ba = 0x28
+    off_entry = 0x30
+    off_name = 0x38
+    off_ctrl1 = off_name + len(name)
+    off_ctrl2 = off_ctrl1 + 16
+    off_cfg = off_ctrl2 + 16
+
+    def ctrl(flags, length, addr):
+        return struct.pack('>IIQ', flags, length, addr)
+
+    insns = [
+        _ldr_lit(0, off_ba),                # ldr x0, [pc, #off_ba]
+        _ldr_lit(1, off_entry - 4),         # ldr x1, [pc, #off_entry] (pc=4)
+        _movz(10, 0x0902, 16),              # movz x10, #0x0902, lsl #16
+        _movk(10, 0x0010),                  # movk x10, #0x0010   -> 0x09020010
+        _adr(11, off_name - 0x10),          # adr x11, name
+        _adr(12, off_ctrl1 - 0x14),         # adr x12, ctrl1
+        _str_off(12, 10),                   # str x12, [x10]  (DMA: select+write name)
+        _adr(12, off_ctrl2 - 0x1c),         # adr x12, ctrl2 (this adr is at 0x1c)
+        _str_off(12, 10),                   # str x12, [x10]  (DMA: write cfg)
+        _br(1),                             # br x1
+    ]
+    blob = struct.pack('<10I', *insns)
+    blob += struct.pack('<QQ', ba_pa, entry_pa)
+    blob += name
+    blob += ctrl(0x18, len(name), STUB_PA + off_name)     # SELECT|WRITE the name
+    blob += ctrl(0x10, len(cfg), STUB_PA + off_cfg)       # WRITE the cfg
+    blob += cfg
+    assert len(blob) <= 0x200, len(blob)
+    return blob
 
 
 def qmp(sock_path, *cmds, pmemsave=None):
@@ -205,6 +265,8 @@ def main():
                     help='extra monitor command after stop (repeatable), e.g. "info registers"')
     ap.add_argument('--fail-on-panic', action='store_true',
                     help='exit 2 for a visible panic, 3 for undecodable/blank (needs --kernel)')
+    ap.add_argument('--trace-int', action='store_true',
+                    help='also log -d int (every interrupt; grows qemu.log fast)')
     ap.add_argument('--check-env', action='store_true', help='only check QEMU is installed')
     a = ap.parse_args()
 
@@ -223,11 +285,12 @@ def main():
         os.unlink(mon)
 
     smp = a.smp if ',' in a.smp else f'{a.smp},clusters=1,cores={a.smp}'
+    d_flags = 'int,guest_errors,unimp' if a.trace_int else 'guest_errors,unimp'
     cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', smp,
            '-m', a.mem, '-serial', f'file:{out}/serial.txt',
            '-qmp', f'unix:{mon},server,nowait', '-no-reboot',
            '-gdb', 'tcp::1234',
-           '-d', 'int,guest_errors,unimp', '-D', f'{out}/qemu.log']
+           '-d', d_flags, '-D', f'{out}/qemu.log']
     if a.display:
         # ramfb driven host-side: the fw_cfg config tells QEMU's ramfb to
         # scan out the guest's sweet framebuffer (PA 0x9c000000) directly —
