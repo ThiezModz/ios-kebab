@@ -1,0 +1,21 @@
+diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
+index cb67b4d..170016e 100644
+--- a/bsd/kern/sweet_amfi.c
++++ b/bsd/kern/sweet_amfi.c
+@@ -374,6 +374,16 @@ void
+ sweet_amfi_policy_register(void)
+ {
+ 	int error = mac_policy_register(&sweet_amfi_mac_conf, &sweet_amfi_mac_handle, NULL);
++	/*
++	 * The dyld shared cache's uuid (dyld4 header, offset 0x58) must match
++	 * kern.bootsessionuuid or dyld refuses the cache and boots every
++	 * process uncached. There is no iBoot on this port to publish the
++	 * boot session, and bootsessionuuid_string stays empty, so copy the
++	 * cache uuid in here (bsd_init, before any exec).
++	 */
++	extern char bootsessionuuid_string[37];
++	strlcpy(bootsessionuuid_string, "8F970452-C9E3-3E88-B114-FEB1864BC9E0",
++	    sizeof(bootsessionuuid_string));
+ 	printf("SWEET AMFI: platform binary policy %s (%d)\n",
+ 	    error ? "NOT registered" : "registered", error);
+ 	error = mac_policy_register(&sweet_sandbox_mac_conf, &sweet_sandbox_mac_handle, NULL);
