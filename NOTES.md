@@ -165,6 +165,15 @@ presented as 1125x2436 — SpringBoard's fb needs are provisioned.
 speed-up experiment (QEMU virt MPIDRs match mkadt's core<<8 regs; PSCI
 CPU_ON via virt's default PSCI).
 
+**SMP on QEMU (2026-10-30):** the 4-CPU boot (`mkadt --qemu-cpus 4` +
+`--smp 4` + `cpus=4`) panicked in SweetCPU::startCPU — sleh.c:951
+"Undefined kernel instruction", instr d4000003 at the PSCI call site.
+d4000003 = **smc #0** (not a BRK): QEMU virt with secure=off has no EL3
+to take the SMC, so it traps as undefined. QEMU virt's PSCI conduit is
+HVC. **0111** adds `sweet_psci_hvc=1` (hvc #0 instead of smc #0, parsed
+per-boot); the phone path keeps smc. Disassembly of the kernel confirmed
+the encoding before the patch was written.
+
 **Uncommitted:** drivers/kebab_ufs.c has the fastboot-wait block (two-stage
 phone loader WIP from the earlier session — leave it).
 
